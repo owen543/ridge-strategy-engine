@@ -1,0 +1,2192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ridge Strategy Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&display=swap" rel="stylesheet" />
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:'DM Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+#root{height:100%}
+input,textarea,select,button{font-family:inherit}
+button{cursor:pointer;border:none;background:none}
+textarea{resize:vertical}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.15);border-radius:3px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn-hover:hover{filter:brightness(0.92)}
+</style>
+<!-- React + ReactDOM UMD (production) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel standalone for JSX -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { createRoot } = ReactDOM;
+
+// ─── API Base ────────────────────────────────────────────
+const API = '/api';
+const AI_API = '/api/ai';
+
+// ─── In-memory session token (storage is blocked in sandboxed iframes) ─────────
+let SESSION_TOKEN = null;
+
+async function apiFetch(path, options = {}) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = SESSION_TOKEN
+    ? `${API}${path}${sep}token=${SESSION_TOKEN}`
+    : `${API}${path}`;
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return {}; }
+}
+
+// ─── Design Tokens ────────────────────────────────────────────
+const LIGHT = {
+  bg: '#F7F8F7', bgCard: '#FFFFFF', bgInput: '#F2F4F3',
+  border: '#E2E5E3', text: '#1A1F1D', textMuted: '#6B7572',
+  accent: '#1C3C34', btnPrimaryBg: '#1C3C34', btnPrimaryText: '#FFFFFF',
+  green: '#1C3C34', orange: '#B8860B', red: '#C0392B',
+  greenBg: 'rgba(28,60,52,0.08)', orangeBg: 'rgba(184,134,11,0.1)', redBg: 'rgba(192,57,43,0.1)',
+  shadow: '0 1px 3px rgba(0,0,0,0.06)', shadowHover: '0 4px 16px rgba(0,0,0,0.08)',
+  topBar: '#FFFFFF',
+};
+const DARK = {
+  bg: '#0F1110', bgCard: '#171B19', bgInput: '#131715',
+  border: '#252C29', text: '#E4E7E5', textMuted: '#8A9390',
+  accent: '#5A8C7E', btnPrimaryBg: '#5A8C7E', btnPrimaryText: '#FFFFFF',
+  green: '#5A8C7E', orange: '#D4913A', red: '#D15B5B',
+  greenBg: 'rgba(90,140,126,0.12)', orangeBg: 'rgba(212,145,58,0.12)', redBg: 'rgba(209,91,91,0.12)',
+  shadow: '0 1px 3px rgba(0,0,0,0.3)', shadowHover: '0 4px 16px rgba(0,0,0,0.4)',
+  topBar: '#171B19',
+};
+
+// ─── Demo Strategy Data ─────────────────────────────────────────────
+const DEMO_STRATEGY = {
+  client_name: "Acme Corp",
+  offer_summary: "B2B revenue intelligence platform that helps VP Sales teams at mid-market SaaS companies identify and close expansion revenue faster.",
+  icp_summary: "Mid-market SaaS companies (100-1000 employees) with complex sales motions, dedicated VP Sales or CRO, using Salesforce or HubSpot.",
+  icp_refinement: {
+    primary_segments: [
+      { segment: "Mid-Market SaaS (Series B-C)", description: "50-500 employee SaaS companies with a defined sales team, active outbound motion, and a VP Sales or CRO in place. Typically using Salesforce + Outreach/Salesloft stack.", fit_score: 92 },
+      { segment: "Growth-Stage FinTech", description: "FinTech companies scaling their enterprise sales motion. High deal complexity, multiple stakeholders, and a clear need for pipeline visibility and forecasting accuracy.", fit_score: 81 },
+    ],
+    secondary_segments: [
+      { segment: "PLG Companies Adding Sales-Assist", description: "Product-led growth companies introducing a sales layer to convert free users to paid enterprise contracts. Urgent need for signal-based targeting.", fit_score: 68 },
+    ],
+    narrowing_recommendations: [
+      "Focus on companies with Salesforce as CRM — highest adoption of rev intelligence tooling and fastest time to value",
+      "Prioritize companies that have recently hired a new VP Sales (last 90 days) — they're building processes and open to new tooling",
+      "Target Series B-C specifically: post-Series A companies often too early, Series D+ often have enterprise contracts with incumbents",
+    ],
+    red_flags: [
+      "Companies with fewer than 5 AEs — too small to justify the investment",
+      "Founder-led sales organizations — no dedicated sales leader to champion the tool",
+      "Companies using only inbound or PLG-only motions with no outbound SDR/AE structure",
+    ],
+  },
+  decision_maker_targeting: {
+    seniority_policy: "VP_PLUS_DEFAULT",
+    primary_titles: [
+      { title: "VP of Sales", rationale: "Primary budget holder and decision maker. Directly feels the pain of pipeline visibility and forecast accuracy. Most likely to champion the tool." },
+      { title: "Chief Revenue Officer (CRO)", rationale: "Final sign-off authority at companies with CRO. Focused on predictable revenue and board-level reporting. Strong ROI narrative resonates." },
+      { title: "VP Revenue Operations", rationale: "Technically evaluates the platform. Often initiates the evaluation and builds the internal business case. Key influencer." },
+    ],
+    secondary_titles: [
+      { title: "Director of Sales Operations", rationale: "Manages day-to-day implementation and integration. Champion at operational level, escalates to VP if ROI case is clear." },
+      { title: "Head of Sales Enablement", rationale: "Cares deeply about rep adoption and coaching use cases. Good secondary contact in larger orgs." },
+    ],
+    avoid_titles: ["SDR Manager", "Account Executive", "Sales Development Representative", "Sales Coordinator", "Marketing Operations"],
+    buying_committee: {
+      who_cares: "VP Sales / CRO — pipeline predictability, forecast accuracy, rep performance visibility",
+      who_signs: "CRO or CFO depending on contract size. VP Sales at sub-$50K ACV.",
+      who_influences: "VP Revenue Operations and Director of Sales Ops — will technically evaluate and integrate",
+      who_blocks: "IT/Security (SOC2 + CRM integration review), CFO if deal >$100K ACV",
+    },
+  },
+  channel_strategy: {
+    primary_channel: "LinkedIn Outbound (Connection + DM sequence)",
+    channel_breakdown: [
+      { channel: "LinkedIn", usage: "Primary", daily_volume: "30-40 connection requests", notes: "VP Sales + CRO targeting. Personalized connection note required. Do not send template without personalization." },
+      { channel: "Email", usage: "Secondary", daily_volume: "20-30 emails/day", notes: "Used for follow-up after LinkedIn connect. More detailed, can include case study link or benchmark data." },
+      { channel: "Cold Calling", usage: "Tertiary", daily_volume: "10-15 dials/day", notes: "Reserved for warm prospects who opened emails 3+ times or replied on LinkedIn. Never first touch." },
+    ],
+    pacing: {
+      ramp_week_1: "Start at 50% volume — 15-20 LinkedIn + 10 email. Test messages, gather reply data before scaling.",
+      steady_state: "Full volume by week 3: 35-40 LinkedIn + 25 email + 10 calls on warm prospects",
+      multi_sender: "Consider adding a second sender (SDR + AE co-sender) after week 4 if response rate >3%",
+    },
+    warm_vs_cold: "70% cold outbound (LinkedIn + email), 30% warm follow-up (opened email 2+ times, visited pricing page, LinkedIn engaged). Prioritize warm daily.",
+  },
+  messaging_angles: {
+    angles: [
+      { name: "The Forecast Accuracy Angle", description: "Most VP Sales are embarrassed by their forecast accuracy. Open with that pain — use an industry benchmark to make it concrete.", when_to_use: "First touch on VP Sales and CRO. Use when company has 10+ AEs (forecast complexity is real).", example_hook: "Most VP Sales I talk to tell me their forecast is off by 20-30% at least once per quarter. We built something to fix that.", strength: 91 },
+      { name: "The New VP Angle", description: "A new VP Sales in seat wants to build credibility fast. They need visibility they don't have yet. Position as the tool that gives them the intel to look smart.", when_to_use: "Use specifically when LinkedIn shows VP hired in last 90 days. Very high conversion on this segment.", example_hook: "Congrats on the new role at [Company]. Most new VPs I speak with say the first 90 days are a race to understand what's actually happening in the pipeline.", strength: 88 },
+      { name: "The RevOps Efficiency Angle", description: "RevOps leaders care about eliminating manual reporting and CRM hygiene. Lead with time savings and data accuracy.", when_to_use: "Use for VP RevOps and Director Sales Ops as primary audience. Do not use for CRO — too tactical.", example_hook: "If your RevOps team is still pulling pipeline reports manually every week, I'd love to show you what we built to automate that.", strength: 79 },
+    ],
+    lead_with: {
+      insight: "Industry benchmark data: VP Sales at SaaS companies close 23% less expansion revenue than they could due to blind spots in the existing customer base.",
+      curiosity: "Reference the company's recent growth or hiring signals without over-explaining. Let them ask how you found that.",
+      credibility: "Named customer proof: 'We work with the VP Sales teams at [Customer1] and [Customer2] — both doubled their expansion pipeline in Q1.'",
+    },
+    never_say: [
+      "Hope this finds you well",
+      "I wanted to reach out because...",
+      "Just checking in",
+      "Synergy",
+      "Game-changing platform",
+      "Revolutionary AI",
+      "Quick question",
+      "Touching base",
+    ],
+  },
+  value_prop_framing: {
+    first_touch_simplification: "One sentence: 'We help VP Sales teams at SaaS companies see which existing customers are most likely to expand — and close that revenue before it goes to a competitor.' No feature list. No jargon. ROI first.",
+    outcome_emphasis: {
+      primary: "Increase expansion revenue 20-40% by surfacing upsell signals in existing accounts before competitors do",
+      secondary: "Improve forecast accuracy to <10% variance — giving CROs credible, board-ready pipeline numbers",
+      tertiary: "Save RevOps 5-8 hours/week in manual reporting and CRM data reconciliation",
+    },
+    proof_point_strategy: {
+      hint_in_outreach: [
+        "Drop a benchmark number: 'Companies using us see 23% higher expansion rate in year 2'",
+        "Name-drop a mutual customer or competitor customer (if allowed): 'We work with the sales team at [Company]'",
+      ],
+      save_for_calls: [
+        "Full ROI calculator and payback period analysis",
+        "Detailed case study with before/after pipeline metrics",
+        "Competitive displacement story (if they currently use a competitor)",
+      ],
+    },
+  },
+  meeting_booking: {
+    cta_style: {
+      recommended: "Soft CTA — specific question, not 'book a meeting'",
+      description: "VP Sales get too many 'can I get 15 minutes' requests. Instead, ask a specific qualifying question that makes them think and creates a natural reason to reply.",
+      examples: [
+        "Curious — how are you currently tracking expansion signals in your existing accounts?",
+        "Worth a quick look? I can show you how we map upsell signals for a company like yours in about 10 minutes.",
+      ],
+    },
+    calendar_link_timing: "Never include a calendar link in the first message. Add it only in message 2 or 3, after they've shown interest (reply, opened 3+ times, clicked a link).",
+    friction_reduction: [
+      "Offer a specific time slot instead of a calendar link: 'I have Thursday at 2pm ET or Friday at 11am — either work?'",
+      "Keep the first meeting ask to 15-20 minutes — not 30. Shorter = less commitment = higher yes rate.",
+    ],
+    no_show_prevention: [
+      "Send a pre-meeting value-add: 'Before our call, here's a 2-min overview of what I'll be showing you' — increases show rate by ~25%",
+      "Text or LinkedIn message reminder 1 hour before (if they gave mobile or connected on LinkedIn)",
+    ],
+  },
+  sales_nav: {
+    recommended_filters: {
+      geography: ["United States", "Canada"],
+      company_size: { min: 100, max: 1000 },
+      industries: ["Software & Internet", "Computer Software", "Internet", "Financial Services", "FinTech"],
+      seniority: ["VP", "C-Level", "Director"],
+      exclude_industries: ["Staffing & Recruiting", "Education", "Non-profit", "Government"],
+    },
+    title_patterns: {
+      high_performers: [
+        "VP Sales", "VP of Sales", "Chief Revenue Officer", "CRO", "VP Revenue", "VP Revenue Operations", "Head of Sales",
+      ],
+      boolean_string: '("VP Sales" OR "VP of Sales" OR "Chief Revenue Officer" OR "CRO" OR "Head of Sales" OR "VP Revenue") NOT ("Director" OR "Manager" OR "SDR" OR "BDR")',
+    },
+    profile_red_flags: [
+      "Profile shows 'Advisor' or 'Consultant' title — likely not actively running a sales team",
+      "Last active on LinkedIn more than 90 days ago — likely won't respond to LinkedIn outreach",
+      "Open to work badge visible — company may be in cost-cutting mode, wrong time for new tooling",
+      "Company headcount dropped >10% in last 6 months — likely budget freeze",
+    ],
+  },
+  campaign_risks: {
+    likely_objections: [
+      { objection: "'We already use [Competitor/Gong/Clari]'", response_angle: "Acknowledge the tool, differentiate on expansion revenue use case specifically. Most incumbents focus on deal progression, not upsell signals in existing base. Offer a side-by-side." },
+      { objection: "'We don't have budget right now'", response_angle: "Reframe to ROI: 'If we can show you a 20% lift in expansion revenue, what does that translate to in ARR for your team?' Then offer a pilot or delayed start." },
+      { objection: "'Send me some information'", response_angle: "Never send a deck cold. Respond: 'Happy to — what specific challenge should I focus the info on so it's actually relevant to your situation?'" },
+    ],
+    success_signals: [
+      "Reply rate above 5% by end of week 2",
+      "3+ meetings booked in first 2 weeks",
+      "Prospects referencing the benchmark data or asking follow-up questions about methodology",
+    ],
+    failure_signals: [
+      "Reply rate below 2% after 200 outreaches — messaging angle needs to change",
+      "Meeting no-show rate above 30% — qualify harder before booking",
+      "Multiple replies saying 'wrong person' — ICP or title targeting needs adjustment",
+    ],
+    week_1_2_adjustments: [
+      "If reply rate <2%: A/B test the opening line — try the 'new VP angle' vs 'forecast accuracy angle'",
+      "If getting 'not interested' without explanation: shorten messages by 40%, lead with question not statement",
+      "If meetings aren't converting: review discovery call script and ensure problem qualification is happening",
+    ],
+  },
+  targeting: {
+    seniority_policy: "VP_PLUS_DEFAULT",
+    title_clusters: [
+      { cluster: "Revenue Leadership", titles: ["VP Sales", "CRO", "VP Revenue", "Chief Sales Officer"], notes: "Primary cluster — highest conversion, budget authority" },
+      { cluster: "Revenue Operations", titles: ["VP Revenue Operations", "Director Sales Operations", "Head of RevOps"], notes: "Secondary cluster — technical evaluators, champion potential" },
+    ],
+    filters: {
+      company_size_min: 100,
+      company_size_max: 1000,
+      industries_include: ["SaaS", "FinTech", "B2B Software"],
+      exclude: ["Staffing", "Non-profit", "Education", "Healthcare"],
+    },
+  },
+  conversation_flow: {
+    connect_note: "Noticed you're scaling the sales team at {Company} — we help VP Sales teams like yours surface expansion signals in existing accounts. Worth connecting.",
+    message_1: {
+      label: "First Touch — Benchmark Hook",
+      text: "Hey {FirstName},\n\nMost VP Sales I talk to tell me their forecast is wrong by 20-30% at least once per quarter — usually because expansion signals in existing accounts are invisible until it's too late.\n\nWe built something to fix that. Companies using it see a 23% lift in expansion revenue in year 2.\n\nCurious — how are you currently tracking upsell signals across your existing book of business?",
+      quality_score: 88,
+      quality_notes: "Strong open with industry benchmark. Soft CTA with qualifying question. No calendar link — correct. Could be tightened by 10%.",
+    },
+    message_2: {
+      label: "Follow-Up — Case Study Reference",
+      text: "Hey {FirstName},\n\nFollowing up in case this got buried.\n\nWe recently helped the VP Sales team at [SaaS Company] go from ~15% forecast variance to under 8% in one quarter — mainly by giving them visibility into which existing accounts were showing expansion signals before the QBR.\n\nWorth 15 minutes to see if we could do the same for {Company}? Thursday at 2pm ET or Friday at 11am work?",
+      quality_score: 84,
+      quality_notes: "Good social proof reference. Calendar offer placed correctly in message 2. Could make the outcome more specific to their industry.",
+    },
+    message_3: {
+      label: "Final Touch — Direct Ask",
+      text: "Hey {FirstName},\n\nLast one from me — if expansion revenue isn't a priority right now, totally understand.\n\nBut if you ever want to see what we've built for VP Sales teams in your space, I'm easy to reach.\n\n— [Name]",
+      quality_score: 79,
+      quality_notes: "Polite breakup message. Sets up future re-engagement. Consider adding a specific trigger: 'If anything changes on the forecast visibility front...'",
+    },
+    cta_rules: "Never use 'book a call', 'schedule a demo', or 'get 15 minutes' as the primary CTA. Use specific qualifying questions in message 1. Offer specific times (not calendar links) in message 2+.",
+    tone_rules: "Peer-to-peer. Never salesy, never pitchy. Write like a VP talking to another VP. Short paragraphs. No bullet points in LinkedIn messages.",
+    strict_avoid: [
+      "Hope this finds you well",
+      "I wanted to reach out",
+      "Just following up",
+      "Quick question",
+      "Circling back",
+      "Touching base",
+    ],
+  },
+  follow_up: {
+    cadence: "D1 → D4 → D9 → D16 → D25 (5 touches over 25 days, then 30-day re-engagement hold)",
+    philosophy: "Every follow-up must add new value — a new angle, a new piece of data, a new reference. Never send a follow-up that is just 'bumping this up'. If you don't have something new to say, wait.",
+    themes: [
+      { touch: 1, theme: "Benchmark Data", angle: "Lead with the industry benchmark to establish credibility and relevance" },
+      { touch: 2, theme: "Social Proof", angle: "Case study or customer reference — specific outcome, not generic testimonial" },
+      { touch: 3, theme: "Relevant Insight", angle: "Something specific to their company — a growth signal, a hire, a press mention — tied back to the problem" },
+      { touch: 4, theme: "Alternative Frame", angle: "Try a completely different angle (e.g., RevOps efficiency vs. revenue growth) in case the first angle didn't resonate" },
+      { touch: 5, theme: "Breakup", angle: "Polite, professional, leaves door open. Never passive-aggressive." },
+    ],
+  },
+  ridge_execution_notes: {
+    personalization: "Every message must have 1 personalization token beyond {FirstName} and {Company}. Minimum: reference a recent hire, a press mention, their product category, or their CRM stack. Use LinkedIn + Crunchbase for signals.",
+    message_philosophy: "Observation > Offer. Lead with something true about their world before ever mentioning what you do. The best messages make the reader feel understood, not sold to.",
+    quality_benchmark: "Internal benchmark: >80% quality score on all messages before sending. A message scoring below 70 should be rewritten, not sent. Quality score = clarity + relevance + CTA appropriateness.",
+    risks: [
+      "VP Sales inbox fatigue is real — differentiation in the first 5 words is critical",
+      "LinkedIn algorithm changes can reduce connection acceptance rates — monitor weekly and adjust note if <15% acceptance",
+    ],
+    next_steps: [
+      "Build initial Sales Nav list: target 500 prospects matching primary segment filters",
+      "Write and QA 3 LinkedIn message variants for split testing in week 1",
+      "Set up tracking in CRM: log all LinkedIn activity, open rates, reply rates by message variant",
+      "Schedule week 2 review: assess reply rates and adjust primary messaging angle if needed",
+      "Identify 3-5 mutual connections or warm intro paths before cold outreach begins",
+    ],
+  },
+};
+
+// ─── Robust JSON Parser (multi-stage AI response repair) ──────────────────
+function robustJsonParse(raw) {
+  if (!raw || typeof raw !== 'string') throw new Error('Empty or non-string input');
+  let s = raw.trim();
+  // Stage 1: Strip markdown fences
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  // Stage 2: Extract from first { to last }
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) s = s.slice(start, end + 1);
+  // Stage 3: Replace smart quotes, tabs
+  s = s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/\t/g, ' ');
+  // Stage 4: Try direct parse
+  try { return JSON.parse(s); } catch {}
+  // Stage 5: Fix trailing commas
+  s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+  try { return JSON.parse(s); } catch {}
+  // Stage 6: Fix newlines inside strings (walk char by char)
+  let fixed = ''; let inString = false; let escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (escape) { fixed += c; escape = false; continue; }
+    if (c === '\\') { fixed += c; escape = true; continue; }
+    if (c === '"') inString = !inString;
+    if (inString && (c === '\n' || c === '\r')) { fixed += ' '; continue; }
+    fixed += c;
+  }
+  try { return JSON.parse(fixed); } catch {}
+  // Stage 9: Aggressive backward walk
+  for (let i = fixed.length - 1; i >= 0; i--) {
+    if (fixed[i] === '}') {
+      try { return JSON.parse(fixed.slice(0, i + 1)); } catch {}
+    }
+  }
+  throw new Error('JSON parse failed after all repair stages. Raw: ' + s.slice(0, 100));
+}
+
+// ─── Toast Notification System ────────────────────────────────────────────
+const toastListeners = [];
+function showToast(message, type = 'success') {
+  toastListeners.forEach(fn => fn({ message, type, id: Date.now() }));
+}
+
+function ToastContainer({ T }) {
+  const [toasts, setToasts] = useState([]);
+  useEffect(() => {
+    const handler = (t) => {
+      setToasts(prev => [...prev, t]);
+      setTimeout(() => setToasts(prev => prev.filter(x => x.id !== t.id)), 3000);
+    };
+    toastListeners.push(handler);
+    return () => { const idx = toastListeners.indexOf(handler); if (idx > -1) toastListeners.splice(idx, 1); };
+  }, []);
+  return (
+    <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500, color: '#fff',
+          background: t.type === 'error' ? '#C0392B' : t.type === 'warning' ? '#B8860B' : '#1C3C34',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', animation: 'slideIn 0.2s ease',
+          display: 'flex', alignItems: 'center', gap: 8, maxWidth: 320,
+        }}>
+          <span>{t.type === 'error' ? '\u2715' : t.type === 'warning' ? '\u26a0' : '\u2713'}</span>
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Skeleton({ T, width = '100%', height = 16, style = {} }) {
+  return (
+    <div style={{
+      width, height, borderRadius: 6, background: T.border,
+      animation: 'pulse 1.5s ease-in-out infinite', ...style,
+    }} />
+  );
+}
+
+function useTheme() {
+  const [mode, setMode] = useState('light');
+  const T = mode === 'light' ? LIGHT : DARK;
+  const toggle = () => {
+    const next = mode === 'light' ? 'dark' : 'light';
+    setMode(next);
+    apiFetch('/settings', { method: 'POST', body: JSON.stringify({ key: 'theme', value: next }) });
+  };
+  return { T, mode, toggle, setMode };
+}
+
+function Card({ T, children, style = {}, onClick }) {
+  return (
+    <div onClick={onClick} style={{
+      background: T.bgCard, border: `1px solid ${T.border}`,
+      borderRadius: 12, boxShadow: T.shadow, ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function Btn({ T, variant = 'primary', children, onClick, style = {}, disabled = false, small = false }) {
+  const base = {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: small ? '6px 12px' : '9px 18px',
+    borderRadius: 8, fontSize: small ? 12 : 13, fontWeight: 600,
+    cursor: disabled ? 'not-allowed' : 'pointer', transition: 'all 0.15s',
+    opacity: disabled ? 0.5 : 1, ...style,
+  };
+  if (variant === 'primary') return (
+    <button onClick={onClick} disabled={disabled} style={{ ...base, background: T.btnPrimaryBg, color: T.btnPrimaryText, border: 'none' }}>
+      {children}
+    </button>
+  );
+  if (variant === 'danger') return (
+    <button onClick={onClick} disabled={disabled} style={{ ...base, background: T.red, color: '#fff', border: 'none' }}>
+      {children}
+    </button>
+  );
+  return (
+    <button onClick={onClick} disabled={disabled} style={{ ...base, background: 'transparent', color: T.text, border: `1px solid ${T.border}` }}>
+      {children}
+    </button>
+  );
+}
+
+function Input({ T, value, onChange, placeholder, type = 'text', style = {}, multiline = false, rows = 3 }) {
+  const base = {
+    width: '100%', padding: '9px 12px', borderRadius: 8,
+    border: `1px solid ${T.border}`, background: T.bgInput,
+    color: T.text, fontSize: 13, outline: 'none',
+    fontFamily: "'DM Sans', system-ui, sans-serif",
+    transition: 'border-color 0.15s', ...style,
+  };
+  if (multiline) return (
+    <textarea value={value} onChange={onChange} placeholder={placeholder} rows={rows}
+      style={base} onFocus={e => e.target.style.borderColor = T.accent}
+      onBlur={e => e.target.style.borderColor = T.border} />
+  );
+  return (
+    <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={base}
+      onFocus={e => e.target.style.borderColor = T.accent}
+      onBlur={e => e.target.style.borderColor = T.border} />
+  );
+}
+
+function Select({ T, value, onChange, options, style = {} }) {
+  return (
+    <select value={value} onChange={onChange} style={{
+      padding: '8px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+      background: T.bgInput, color: T.text, fontSize: 13, outline: 'none',
+      fontFamily: "'DM Sans', system-ui, sans-serif", cursor: 'pointer', ...style,
+    }}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+function Badge({ T, children, color = 'green' }) {
+  const bg = color === 'green' ? T.greenBg : color === 'orange' ? T.orangeBg : T.redBg;
+  const fg = color === 'green' ? T.green : color === 'orange' ? T.orange : T.red;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', padding: '3px 9px',
+      borderRadius: 20, fontSize: 11, fontWeight: 600, background: bg, color: fg,
+    }}>{children}</span>
+  );
+}
+
+function ScoreBar({ T, score }) {
+  const color = score >= 80 ? T.green : score >= 60 ? T.orange : T.red;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 6, borderRadius: 3, background: T.border, overflow: 'hidden' }}>
+        <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 3 }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color, minWidth: 28 }}>{score}</span>
+    </div>
+  );
+}
+
+function CopyBtn({ T, text, small = true }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button onClick={copy} title="Copy" style={{
+      padding: small ? '4px 8px' : '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+      border: `1px solid ${T.border}`, background: T.bgCard, color: copied ? T.green : T.textMuted,
+      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, transition: 'all 0.15s',
+    }}>
+      {copied ? '\u2713 Copied' : '\u2358 Copy'}
+    </button>
+  );
+}
+
+function ThemeToggle({ T, mode, toggle }) {
+  return (
+    <button onClick={toggle} style={{
+      width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center',
+      justifyContent: 'center', border: `1px solid ${T.border}`, background: T.bgCard,
+      cursor: 'pointer', fontSize: 16, color: T.text, flexShrink: 0,
+    }}>
+      {mode === 'light' ? '\u263e' : '\u2600'}
+    </button>
+  );
+}
+
+function RidgeLogo({ T, size = 28, mode }) {
+  const isLight = T.bg === '#F7F8F7' || T.bg === LIGHT.bg;
+  const src = isLight ? './logo-light.png' : './logo-dark.png';
+  const height = size;
+  const width = Math.round(size * 3.65);
+  return (
+    <img src={src} alt="Ridge" style={{ height, width, objectFit: 'contain' }} />
+  );
+}
+
+function statusColor(status, T) {
+  const m = { active: 'green', strategy_complete: 'green', paused: 'orange', archived: 'gray', pending_intake: 'orange' };
+  return m[status] || 'green';
+}
+function statusLabel(status) {
+  const m = { active: 'Active', strategy_complete: 'Strategy Complete', paused: 'Paused', archived: 'Archived', pending_intake: 'Pending Intake' };
+  return m[status] || status;
+}
+
+function EditableField({ T, value, onChange, multiline = false, editMode = false, rows = 3, style = {} }) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  if (!editMode) {
+    return (
+      <span style={{ whiteSpace: 'pre-wrap', color: T.text, fontSize: 13, lineHeight: 1.6, ...style }}>
+        {value || <em style={{ color: T.textMuted }}>—</em>}
+      </span>
+    );
+  }
+  return (
+    <Input T={T} value={local} multiline={multiline} rows={rows}
+      onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
+      style={{ ...style }} />
+  );
+}
+
+function LoginScreen({ T, onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async () => {
+    setError(''); setLoading(true);
+    try {
+      const data = await apiFetch('/auth/login', {
+        method: 'POST', body: JSON.stringify({ email, password }),
+      });
+      if (data.error) { setError(data.error); setLoading(false); return; }
+      SESSION_TOKEN = data.token;
+      onLogin(data.user, data.token);
+    } catch (e) {
+      setError('Connection error. Please try again.'); setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 400 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 32, gap: 12 }}>
+          <RidgeLogo T={T} size={44} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.textMuted, textAlign: 'center', letterSpacing: '0.02em' }}>Strategy Engine</div>
+            <div style={{ fontSize: 13, color: T.textMuted, textAlign: 'center', marginTop: 4 }}>Sign in to your account</div>
+          </div>
+        </div>
+        <Card T={T} style={{ padding: 32 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Email</label>
+              <Input T={T} value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" type="email" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Password</label>
+              <Input T={T} value={password} onChange={e => setPassword(e.target.value)} placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" type="password"
+                style={{ letterSpacing: password ? '0.1em' : 'normal' }} />
+            </div>
+            {error && <div style={{ fontSize: 13, color: T.red, background: T.redBg, padding: '8px 12px', borderRadius: 6 }}>{error}</div>}
+            <Btn T={T} onClick={handleLogin} disabled={loading || !email || !password} style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}>
+              {loading ? 'Signing in\u2026' : 'Sign In'}
+            </Btn>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function TopBar({ T, mode, toggle, user, onLogout, onManageAccounts, view, onViewChange, wsName }) {
+  return (
+    <div style={{
+      height: 56, background: T.topBar, borderBottom: `1px solid ${T.border}`,
+      display: 'flex', alignItems: 'center', padding: '0 20px', gap: 16, flexShrink: 0, position: 'sticky', top: 0, zIndex: 100,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120 }}>
+        <RidgeLogo T={T} size={24} />
+      </div>
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+        {user?.role === 'ridge_admin' && !wsName && (
+          <div style={{ display: 'flex', gap: 4, background: T.bg, borderRadius: 8, padding: 3 }}>
+            {[{ id: 'workspaces', label: 'Workspaces' }].map(v => (
+              <button key={v.id} onClick={() => onViewChange(v.id)} style={{
+                padding: '5px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                background: view === v.id ? T.bgCard : 'transparent',
+                color: view === v.id ? T.text : T.textMuted,
+                border: view === v.id ? `1px solid ${T.border}` : '1px solid transparent',
+                cursor: 'pointer', boxShadow: view === v.id ? T.shadow : 'none',
+              }}>{v.label}</button>
+            ))}
+          </div>
+        )}
+        {wsName && (
+          <span style={{ fontSize: 14, fontWeight: 600, color: T.text, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {wsName}
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120, justifyContent: 'flex-end' }}>
+        {user?.role === 'ridge_admin' && (
+          <Btn T={T} variant="outline" small onClick={onManageAccounts}>Manage Accounts</Btn>
+        )}
+        <ThemeToggle T={T} mode={mode} toggle={toggle} />
+        <span style={{ fontSize: 13, fontWeight: 500, color: T.textMuted }}>{user?.name || user?.email}</span>
+        <button onClick={onLogout} style={{ fontSize: 12, color: T.textMuted, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px', borderRadius: 6 }}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceCard({ T, ws, onClick }) {
+  const sc = statusColor(ws.status, T);
+  return (
+    <Card T={T} onClick={onClick} style={{ padding: 20, cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+      onMouseEnter={e => e.currentTarget.style.boxShadow = T.shadowHover}
+      onMouseLeave={e => e.currentTarget.style.boxShadow = T.shadow}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: T.text, marginRight: 8 }}>{ws.name}</div>
+        <Badge T={T} color={sc}>{statusLabel(ws.status)}</Badge>
+      </div>
+      {ws.website && <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8 }}>{ws.website}</div>}
+      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: T.textMuted }}>
+        <span>Intake: {ws.intake_count || 0}</span>
+        <span>Runs: {ws.runs_count || 0}</span>
+        {ws.created_at && <span>Created {ws.created_at.slice(0, 10)}</span>}
+      </div>
+    </Card>
+  );
+}
+
+function CreateWorkspaceModal({ T, onClose, onCreated }) {
+  const [name, setName] = useState('');
+  const [website, setWebsite] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!name) return;
+    setLoading(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const data = await apiFetch('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name, website, createdAt: today, status: 'pending_intake', clientEmail, notes }),
+    });
+    setLoading(false);
+    if (data.id) onCreated(data.id);
+  };
+
+  return (
+    <ModalOverlay T={T} onClose={onClose}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 20 }}>Create Workspace</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <Field T={T} label="Company Name *"><Input T={T} value={name} onChange={e => setName(e.target.value)} placeholder="Acme Corp" /></Field>
+        <Field T={T} label="Website"><Input T={T} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://acme.com" /></Field>
+        <Field T={T} label="Client Email"><Input T={T} value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="contact@acme.com" /></Field>
+        <Field T={T} label="Notes"><Input T={T} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Internal notes\u2026" multiline rows={2} /></Field>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+          <Btn T={T} variant="outline" onClick={onClose}>Cancel</Btn>
+          <Btn T={T} onClick={submit} disabled={loading || !name}>{loading ? 'Creating\u2026' : 'Create Workspace'}</Btn>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function ModalOverlay({ T, onClose, children }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: 24,
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <Card T={T} style={{ width: '100%', maxWidth: 520, padding: 28, maxHeight: '90vh', overflowY: 'auto' }}>
+        {children}
+      </Card>
+    </div>
+  );
+}
+
+function Field({ T, label, children }) {
+  return (
+    <div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function WorkspacesView({ T, onSelect }) {
+  const [workspaces, setWorkspaces] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showCreate, setShowCreate] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    const data = await apiFetch('/workspaces');
+    if (Array.isArray(data)) setWorkspaces(data);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = workspaces.filter(ws => {
+    const q = search.toLowerCase();
+    const matchSearch = !q || ws.name?.toLowerCase().includes(q) || ws.website?.toLowerCase().includes(q);
+    const matchStatus = statusFilter === 'all' || ws.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  return (
+    <div style={{ padding: '24px 24px', maxWidth: 1200, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: T.text, letterSpacing: '-0.5px' }}>Workspaces</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{workspaces.length} workspace{workspaces.length !== 1 ? 's' : ''}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Input T={T} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workspaces\u2026" style={{ width: 220 }} />
+          <Select T={T} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} options={[
+            { value: 'all', label: 'All Statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'strategy_complete', label: 'Strategy Complete' },
+            { value: 'pending_intake', label: 'Pending Intake' },
+            { value: 'paused', label: 'Paused' },
+            { value: 'archived', label: 'Archived' },
+          ]} />
+          <Btn T={T} onClick={() => setShowCreate(true)}>+ New Workspace</Btn>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', color: T.textMuted, padding: 60, fontSize: 14 }}>Loading workspaces\u2026</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 80 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>\ud83d\udccb</div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 8 }}>No workspaces found</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 20 }}>Create your first workspace to get started.</div>
+          <Btn T={T} onClick={() => setShowCreate(true)}>+ Create Workspace</Btn>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+          {filtered.map(ws => (
+            <WorkspaceCard key={ws.id} T={T} ws={ws} onClick={() => onSelect(ws)} />
+          ))}
+        </div>
+      )}
+
+      {showCreate && (
+        <CreateWorkspaceModal T={T} onClose={() => setShowCreate(false)} onCreated={id => {
+          setShowCreate(false); load();
+        }} />
+      )}
+    </div>
+  );
+}
+
+const INTAKE_DEFAULTS = {
+  company: { name: '', website: '', description: '', size_range: '', industry: '' },
+  offer: { name: '', description: '', pricing_model: '', avg_deal_size: '', differentiators: '' },
+  icp: { description: '', company_size: { min: '', max: '' }, industries: '', geographies: '', technographics: '', excluded_segments: '' },
+  value_props: { primary: '', secondary: '', proof_points: '' },
+  pain_points: { primary: '', secondary: '', status_quo_cost: '' },
+  constraints: { excluded_titles: '', tone_preference: '', compliance_notes: '', other: '' },
+};
+
+function deepMerge(target, source) {
+  const result = { ...target };
+  for (const key in source) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      result[key] = deepMerge(target[key] || {}, source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
+function mergeIntoEmpty(existing, scanned) {
+  const result = JSON.parse(JSON.stringify(existing));
+  for (const section in scanned) {
+    if (!result[section]) result[section] = {};
+    if (typeof scanned[section] === 'object' && !Array.isArray(scanned[section])) {
+      for (const field in scanned[section]) {
+        if (typeof scanned[section][field] === 'object' && !Array.isArray(scanned[section][field])) {
+          if (!result[section][field]) result[section][field] = {};
+          for (const sub in scanned[section][field]) {
+            if (!result[section][field][sub]) result[section][field][sub] = scanned[section][field][sub];
+          }
+        } else {
+          if (!result[section][field]) result[section][field] = scanned[section][field];
+        }
+      }
+    }
+  }
+  return result;
+}
+
+function buildIntakeBlock(intake) {
+  const i = intake;
+  return `Company: ${i.company.name} | ${i.company.website} | ${i.company.industry} | Size: ${i.company.size_range} | ${i.company.description}
+Offer: ${i.offer.name} | ${i.offer.description} | Pricing: ${i.offer.pricing_model} | Deal: ${i.offer.avg_deal_size} | Diff: ${i.offer.differentiators}
+ICP: ${i.icp.description} | Size: ${i.icp.company_size.min}-${i.icp.company_size.max} | Industries: ${i.icp.industries} | Geo: ${i.icp.geographies} | Tech: ${i.icp.technographics} | Exclude: ${i.icp.excluded_segments}
+Value Props: ${i.value_props.primary} | ${i.value_props.secondary} | Proof: ${i.value_props.proof_points}
+Pain Points: ${i.pain_points.primary} | ${i.pain_points.secondary} | Cost: ${i.pain_points.status_quo_cost}
+Constraints: Exclude titles: ${i.constraints.excluded_titles} | Tone: ${i.constraints.tone_preference} | Compliance: ${i.constraints.compliance_notes} | Other: ${i.constraints.other}`;
+}
+
+function IntakeSection({ T, title, icon, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card T={T} style={{ marginBottom: 12, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(!open)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 18px', background: 'transparent', border: 'none', cursor: 'pointer',
+        color: T.text, fontWeight: 700, fontSize: 14, fontFamily: 'inherit',
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{icon} {title}</span>
+        <span style={{ color: T.textMuted, fontSize: 16, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>\u25be</span>
+      </button>
+      {open && <div style={{ padding: '4px 18px 18px', borderTop: `1px solid ${T.border}` }}>{children}</div>}
+    </Card>
+  );
+}
+
+function IntakeField({ T, label, value, onChange, multiline = false, rows = 3, hint }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
+        {hint && <span style={{ fontSize: 11, color: T.textMuted, fontStyle: 'italic' }}>{hint}</span>}
+      </div>
+      <Input T={T} value={value || ''} onChange={onChange} multiline={multiline} rows={rows} />
+    </div>
+  );
+}
+
+function IntakeForm({ T, workspaceId, onIntakeChange }) {
+  const [intake, setIntake] = useState(INTAKE_DEFAULTS);
+  const [scanUrl, setScanUrl] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState('');
+  const [notes, setNotes] = useState('');
+  const [notesSource, setNotesSource] = useState('Circleback');
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    apiFetch(`/intake?workspace_id=${workspaceId}`).then(data => {
+      if (data && Object.keys(data).length > 0) {
+        const merged = deepMerge(INTAKE_DEFAULTS, data);
+        setIntake(merged);
+        if (onIntakeChange) onIntakeChange(merged);
+      }
+    });
+  }, [workspaceId]);
+
+  const save = useCallback((newIntake) => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      apiFetch('/intake', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: newIntake }) })
+        .then(() => showToast('Intake saved', 'success'));
+      if (onIntakeChange) onIntakeChange(newIntake);
+    }, 800);
+  }, [workspaceId]);
+
+  const update = (section, field, val) => {
+    const next = { ...intake, [section]: { ...intake[section], [field]: val } };
+    setIntake(next); save(next);
+  };
+  const updateNested = (section, sub, field, val) => {
+    const next = { ...intake, [section]: { ...intake[section], [sub]: { ...intake[section][sub], [field]: val } } };
+    setIntake(next); save(next);
+  };
+
+  const handleScan = async () => {
+    if (!scanUrl) return;
+    setScanning(true); setScanMsg('Scanning website with AI + web search\u2026');
+    try {
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scan_website', url: scanUrl }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const parsed = robustJsonParse(result.text);
+        const merged = mergeIntoEmpty(intake, parsed);
+        setIntake(merged); save(merged);
+        setScanMsg(`Scan complete via ${result.provider} (${result.model}). Empty fields filled from web research.`);
+        showToast('Website scanned \u2014 data merged into empty fields', 'success');
+      } else {
+        setScanMsg('Scan failed: ' + (result.error || 'Unknown error'));
+        showToast('Website scan failed', 'error');
+      }
+    } catch (err) {
+      setScanMsg('Scan error: ' + err.message);
+      showToast('Scan error', 'error');
+    }
+    setScanning(false);
+  };
+
+  const handleImport = async () => {
+    if (!notes) return;
+    setImporting(true); setImportMsg('Extracting structured data from meeting notes with AI\u2026');
+    try {
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'extract_notes', notes: notes, source: notesSource }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const parsed = robustJsonParse(result.text);
+        const merged = mergeIntoEmpty(intake, parsed);
+        setIntake(merged); save(merged);
+        setImportMsg(`Import complete via ${result.provider}. Data extracted and merged into empty fields.`);
+        showToast('Meeting notes imported \u2014 data merged', 'success');
+      } else {
+        setImportMsg('Import failed: ' + (result.error || 'Unknown error'));
+        showToast('Notes import failed', 'error');
+      }
+    } catch (err) {
+      setImportMsg('Import error: ' + err.message);
+      showToast('Import error', 'error');
+    }
+    setImporting(false);
+  };
+
+  return (
+    <div>
+      <Card T={T} style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>\ud83d\udd0d Website Scanner</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Input T={T} value={scanUrl} onChange={e => setScanUrl(e.target.value)} placeholder="https://company.com" style={{ flex: 1, minWidth: 200 }} />
+          <Btn T={T} onClick={handleScan} disabled={scanning || !scanUrl}>{scanning ? 'Scanning\u2026' : 'Scan Website'}</Btn>
+        </div>
+        {scanMsg && <div style={{ marginTop: 8, fontSize: 12, color: T.textMuted, fontStyle: 'italic' }}>{scanMsg}</div>}
+      </Card>
+
+      <Card T={T} style={{ padding: 18, marginBottom: 20 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>\ud83d\udccb Meeting Notes Import</div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <Select T={T} value={notesSource} onChange={e => setNotesSource(e.target.value)}
+            options={[{ value: 'Circleback', label: 'Circleback' }, { value: 'Granola', label: 'Granola' }, { value: 'Fathom', label: 'Fathom' }, { value: 'Otter', label: 'Otter' }, { value: 'Raw Text', label: 'Raw Text' }]} />
+        </div>
+        <Input T={T} value={notes} onChange={e => setNotes(e.target.value)} multiline rows={4} placeholder="Paste meeting notes here\u2026" style={{ marginBottom: 8 }} />
+        <Btn T={T} onClick={handleImport} disabled={importing || !notes} small>{importing ? 'Importing\u2026' : 'Import Notes'}</Btn>
+        {importMsg && <div style={{ marginTop: 8, fontSize: 12, color: T.textMuted, fontStyle: 'italic' }}>{importMsg}</div>}
+      </Card>
+
+      <IntakeSection T={T} title="Company" icon="\ud83c\udfe2" defaultOpen={true}>
+        <IntakeField T={T} label="Company Name" value={intake.company.name} onChange={e => update('company', 'name', e.target.value)} />
+        <IntakeField T={T} label="Website" value={intake.company.website} onChange={e => update('company', 'website', e.target.value)} />
+        <IntakeField T={T} label="Description" value={intake.company.description} onChange={e => update('company', 'description', e.target.value)} multiline rows={3} hint="What does the company do?" />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <IntakeField T={T} label="Size Range" value={intake.company.size_range} onChange={e => update('company', 'size_range', e.target.value)} hint="e.g. 50-200" />
+          <IntakeField T={T} label="Industry" value={intake.company.industry} onChange={e => update('company', 'industry', e.target.value)} />
+        </div>
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Offer" icon="\ud83d\udcbc">
+        <IntakeField T={T} label="Offer Name" value={intake.offer.name} onChange={e => update('offer', 'name', e.target.value)} />
+        <IntakeField T={T} label="Description" value={intake.offer.description} onChange={e => update('offer', 'description', e.target.value)} multiline rows={3} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <IntakeField T={T} label="Pricing Model" value={intake.offer.pricing_model} onChange={e => update('offer', 'pricing_model', e.target.value)} />
+          <IntakeField T={T} label="Avg Deal Size" value={intake.offer.avg_deal_size} onChange={e => update('offer', 'avg_deal_size', e.target.value)} hint="e.g. $25,000" />
+        </div>
+        <IntakeField T={T} label="Differentiators" value={intake.offer.differentiators} onChange={e => update('offer', 'differentiators', e.target.value)} multiline rows={2} />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Ideal Customer Profile (ICP)" icon="\ud83c\udfaf">
+        <IntakeField T={T} label="ICP Description" value={intake.icp.description} onChange={e => update('icp', 'description', e.target.value)} multiline rows={3} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <IntakeField T={T} label="Company Size Min" value={intake.icp.company_size?.min} onChange={e => updateNested('icp', 'company_size', 'min', e.target.value)} hint="employees" />
+          <IntakeField T={T} label="Company Size Max" value={intake.icp.company_size?.max} onChange={e => updateNested('icp', 'company_size', 'max', e.target.value)} hint="employees" />
+        </div>
+        <IntakeField T={T} label="Target Industries" value={intake.icp.industries} onChange={e => update('icp', 'industries', e.target.value)} />
+        <IntakeField T={T} label="Geographies" value={intake.icp.geographies} onChange={e => update('icp', 'geographies', e.target.value)} />
+        <IntakeField T={T} label="Technographics" value={intake.icp.technographics} onChange={e => update('icp', 'technographics', e.target.value)} hint="Tools they use" />
+        <IntakeField T={T} label="Excluded Segments" value={intake.icp.excluded_segments} onChange={e => update('icp', 'excluded_segments', e.target.value)} />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Value Propositions" icon="\u2b50">
+        <IntakeField T={T} label="Primary Value Prop" value={intake.value_props.primary} onChange={e => update('value_props', 'primary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Secondary Value Prop" value={intake.value_props.secondary} onChange={e => update('value_props', 'secondary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Proof Points" value={intake.value_props.proof_points} onChange={e => update('value_props', 'proof_points', e.target.value)} multiline rows={3} hint="Stats, case studies, metrics" />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Pain Points" icon="\ud83d\udd25">
+        <IntakeField T={T} label="Primary Pain Point" value={intake.pain_points.primary} onChange={e => update('pain_points', 'primary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Secondary Pain Point" value={intake.pain_points.secondary} onChange={e => update('pain_points', 'secondary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Status Quo Cost" value={intake.pain_points.status_quo_cost} onChange={e => update('pain_points', 'status_quo_cost', e.target.value)} multiline rows={2} hint="What does NOT solving this cost them?" />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Constraints" icon="\ud83d\udea7">
+        <IntakeField T={T} label="Excluded Titles" value={intake.constraints.excluded_titles} onChange={e => update('constraints', 'excluded_titles', e.target.value)} hint="Titles NOT to contact" />
+        <IntakeField T={T} label="Tone Preference" value={intake.constraints.tone_preference} onChange={e => update('constraints', 'tone_preference', e.target.value)} hint="e.g. Professional, casual" />
+        <IntakeField T={T} label="Compliance Notes" value={intake.constraints.compliance_notes} onChange={e => update('constraints', 'compliance_notes', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Other Constraints" value={intake.constraints.other} onChange={e => update('constraints', 'other', e.target.value)} multiline rows={2} />
+      </IntakeSection>
+
+      <div style={{ fontSize: 11, color: T.textMuted, textAlign: 'center', padding: '8px 0' }}>
+        Auto-saving on every change
+      </div>
+    </div>
+  );
+}
+
+function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState('');
+  const [running, setRunning] = useState(false);
+  const [model, setModel] = useState('sonnet');
+  const [error, setError] = useState('');
+
+  const runStrategyLive = async () => {
+    setRunning(true); setProgress(0); setError('');
+    setStatus('Loading intake data\u2026');
+    setProgress(5);
+
+    const currentIntake = intake || INTAKE_DEFAULTS;
+    const companyName = currentIntake.company.name || 'Unknown Company';
+    const intakeBlock = buildIntakeBlock(currentIntake);
+
+    setProgress(10); setStatus('Generating research & targeting (Part A)\u2026');
+
+    try {
+      let resA, resB;
+      try {
+        const rawA = await fetch(AI_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'strategy_part_a', company_name: companyName, intake_block: intakeBlock, model }),
+        });
+        resA = await rawA.json();
+      } catch (e) {
+        resA = { ok: false, error: 'Part A network error: ' + e.message };
+      }
+
+      setProgress(45); setStatus('Part A received. Generating execution & messaging (Part B)\u2026');
+
+      try {
+        const rawB = await fetch(AI_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'strategy_part_b', company_name: companyName, intake_block: intakeBlock, model }),
+        });
+        resB = await rawB.json();
+      } catch (e) {
+        resB = { ok: false, error: 'Part B network error: ' + e.message };
+      }
+
+      setProgress(70); setStatus('Both responses received, parsing\u2026');
+
+      let parsedA = {}, parsedB = {};
+      if (resA.ok && resA.text) {
+        try { parsedA = robustJsonParse(resA.text); } catch (e) { console.warn('Part A parse error:', e); }
+      }
+      if (resB.ok && resB.text) {
+        try { parsedB = robustJsonParse(resB.text); } catch (e) { console.warn('Part B parse error:', e); }
+      }
+
+      if (!resA.ok && !resB.ok) {
+        setError(`Both API calls failed. A: ${resA.error || 'unknown'}. B: ${resB.error || 'unknown'}`);
+        setRunning(false);
+        showToast('Strategy generation failed', 'error');
+        return;
+      }
+
+      setProgress(85); setStatus('Merging strategy halves\u2026');
+      const fullStrategy = { ...parsedA, ...parsedB };
+
+      setProgress(92); setStatus('Saving strategy\u2026');
+      await apiFetch('/strategy', {
+        method: 'POST',
+        body: JSON.stringify({ workspace_id: workspaceId, data: fullStrategy }),
+      });
+
+      setProgress(100); setStatus(`Strategy complete! Generated via ${resA.provider || 'AI'} (${resA.model || model})`);
+      showToast('Strategy generated successfully', 'success');
+      onStrategyGenerated(fullStrategy);
+    } catch (err) {
+      setError('Network error: ' + err.message);
+      showToast('Strategy generation error', 'error');
+    }
+    setRunning(false);
+  };
+
+  const runStrategyDemo = async () => {
+    setRunning(true); setProgress(0); setStatus('Loading demo strategy\u2026');
+    const steps = [
+      [400, 25, 'Simulating Part A\u2026'], [400, 50, 'Simulating Part B\u2026'],
+      [300, 75, 'Merging\u2026'], [200, 100, 'Demo strategy loaded!'],
+    ];
+    for (const [delay, pct, msg] of steps) {
+      await new Promise(r => setTimeout(r, delay));
+      setProgress(pct); setStatus(msg);
+    }
+    await apiFetch('/strategy', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: DEMO_STRATEGY }) });
+    onStrategyGenerated(DEMO_STRATEGY);
+    setRunning(false);
+  };
+
+  return (
+    <Card T={T} style={{ padding: 24, marginBottom: 20 }}>
+      <div style={{ fontWeight: 700, fontSize: 15, color: T.text, marginBottom: 8 }}>Strategy Generation</div>
+      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 16 }}>
+        Runs two parallel AI calls (Research &amp; Targeting + Execution &amp; Messaging) via Claude Sonnet, with OpenAI fallback. Merges into a complete 11-section strategy.
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: T.textMuted }}>Model:</span>
+        <select value={model} onChange={e => setModel(e.target.value)} style={{
+          padding: '4px 8px', borderRadius: 6, border: `1px solid ${T.border}`, background: T.bgInput,
+          color: T.text, fontSize: 12, fontFamily: 'inherit',
+        }}>
+          <option value="sonnet">Claude Sonnet (Best)</option>
+          <option value="haiku">Claude Haiku (Fast)</option>
+          <option value="gpt4o">GPT-4o (Fallback)</option>
+          <option value="gpt4o-mini">GPT-4o Mini (Fast/Cheap)</option>
+        </select>
+      </div>
+      {running && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: T.textMuted }}>{status}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: T.accent }}>{progress}%</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: 'hidden' }}>
+            <div style={{ width: `${progress}%`, height: '100%', background: T.accent, borderRadius: 3, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+      )}
+      {error && <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: T.redBg, color: T.red, fontSize: 12 }}>{error}</div>}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <Btn T={T} onClick={runStrategyLive} disabled={running}>
+          {running ? `Running\u2026 ${progress}%` : '\u25b6 Run Strategy (AI)'}
+        </Btn>
+        <Btn T={T} onClick={runStrategyDemo} disabled={running} secondary>
+          Demo Data
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
+const STRATEGY_TABS = [
+  { id: 'icp', label: 'ICP Validation', icon: '\ud83c\udfaf' },
+  { id: 'dm', label: 'Decision-Maker', icon: '\ud83d\udc64' },
+  { id: 'channel', label: 'Channel Strategy', icon: '\ud83d\udce1' },
+  { id: 'messaging', label: 'Messaging Angles', icon: '\ud83d\udcac' },
+  { id: 'valueprop', label: 'Value Prop', icon: '\u2b50' },
+  { id: 'meeting', label: 'Meeting Strategy', icon: '\ud83d\udcc5' },
+  { id: 'salesnav', label: 'Sales Nav', icon: '\ud83d\udd0e' },
+  { id: 'risk', label: 'Risk & Optimization', icon: '\u26a0\ufe0f' },
+  { id: 'flow', label: 'Conversation Flow', icon: '\u2709\ufe0f' },
+  { id: 'followup', label: 'Follow-ups', icon: '\ud83d\udd01' },
+  { id: 'exec', label: 'Execution Notes', icon: '\ud83d\udccb' },
+];
+
+function StrategyTabs({ T, activeTab, onSelect }) {
+  const ref = useRef(null);
+  return (
+    <div ref={ref} style={{
+      display: 'flex', gap: 4, overflowX: 'auto', padding: '4px 0 8px', flexWrap: 'nowrap',
+      scrollbarWidth: 'none', msOverflowStyle: 'none',
+    }}>
+      {STRATEGY_TABS.map(t => (
+        <button key={t.id} onClick={() => onSelect(t.id)} style={{
+          padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+          background: activeTab === t.id ? T.accent : T.bgCard,
+          color: activeTab === t.id ? '#fff' : T.textMuted,
+          border: activeTab === t.id ? 'none' : `1px solid ${T.border}`,
+          cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+          transition: 'all 0.15s',
+        }}>
+          {t.icon} {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SectionCard({ T, title, children, style = {} }) {
+  return (
+    <Card T={T} style={{ padding: 20, marginBottom: 16, ...style }}>
+      {title && <div style={{ fontSize: 13, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>{title}</div>}
+      {children}
+    </Card>
+  );
+}
+
+function DataRow({ T, label, children }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, minWidth: 140, paddingTop: 1 }}>{label}</div>
+      <div style={{ flex: 1, fontSize: 13, color: T.text, lineHeight: 1.6 }}>{children}</div>
+    </div>
+  );
+}
+
+function BulletList({ T, items }) {
+  if (!items?.length) return null;
+  return (
+    <ul style={{ paddingLeft: 18, margin: 0 }}>
+      {items.map((item, i) => (
+        <li key={i} style={{ fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 4 }}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function ICPTab({ T, strategy, editMode, onChange }) {
+  const r = strategy.icp_refinement || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Primary Segments">
+        {(r.primary_segments || []).map((seg, i) => (
+          <div key={i} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: i < (r.primary_segments.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: T.text }}>{seg.segment}</div>
+              <div style={{ minWidth: 140 }}><ScoreBar T={T} score={seg.fit_score || 0} /></div>
+            </div>
+            <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>{seg.description}</div>
+          </div>
+        ))}
+      </SectionCard>
+      {r.secondary_segments?.length > 0 && (
+        <SectionCard T={T} title="Secondary Segments">
+          {r.secondary_segments.map((seg, i) => (
+            <div key={i} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: T.text }}>{seg.segment}</span>
+                <div style={{ minWidth: 120 }}><ScoreBar T={T} score={seg.fit_score || 0} /></div>
+              </div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>{seg.description}</div>
+            </div>
+          ))}
+        </SectionCard>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Narrowing Recommendations">
+          <BulletList T={T} items={r.narrowing_recommendations} />
+        </SectionCard>
+        <SectionCard T={T} title="Red Flags">
+          {(r.red_flags || []).map((f, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+              <span style={{ color: T.red, flexShrink: 0 }}>\u2691</span>
+              <span style={{ fontSize: 13, color: T.text }}>{f}</span>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+const SENIORITY_POLICIES = {
+  VP_PLUS_DEFAULT: 'VP+ Only (Default)',
+  VP_PLUS_ALLOW_DIRECTOR_HEAD_SMALL_CO: 'VP+ with Director/Head (Small Co)',
+  VP_PLUS_ALLOW_DIRECTOR_HEAD_FUNCTIONAL: 'VP+ with Director/Head (Functional)',
+  C_SUITE_ONLY: 'C-Suite Only',
+  DIRECTOR_PLUS: 'Director+',
+  ALL_LEVELS: 'All Levels',
+};
+
+function DMTab({ T, strategy, editMode, onChange }) {
+  const dm = strategy.decision_maker_targeting || {};
+  const bc = dm.buying_committee || {};
+  const [seniorityPolicy, setSeniorityPolicy] = useState(dm.seniority_policy || 'VP_PLUS_DEFAULT');
+
+  const updateSeniority = (val) => {
+    setSeniorityPolicy(val);
+    if (onChange) onChange({ ...strategy, decision_maker_targeting: { ...dm, seniority_policy: val } });
+  };
+
+  return (
+    <div>
+      <SectionCard T={T} title="Seniority Policy">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, color: T.textMuted, fontWeight: 600 }}>Active policy:</div>
+          <Select T={T} value={seniorityPolicy} onChange={e => updateSeniority(e.target.value)}
+            options={Object.entries(SENIORITY_POLICIES).map(([v, l]) => ({ value: v, label: l }))} />
+          <Badge T={T} color="green">{SENIORITY_POLICIES[seniorityPolicy]}</Badge>
+        </div>
+      </SectionCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Primary Titles">
+          {(dm.primary_titles || []).map((t, i) => (
+            <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < (dm.primary_titles.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.title}</div>
+              <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>{t.rationale}</div>
+            </div>
+          ))}
+        </SectionCard>
+        <SectionCard T={T} title="Secondary Titles">
+          {(dm.secondary_titles || []).map((t, i) => (
+            <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < (dm.secondary_titles.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.title}</div>
+              <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>{t.rationale}</div>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Titles to Avoid">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(dm.avoid_titles || []).map((t, i) => (
+            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>{t}</span>
+          ))}
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Buying Committee">
+        <DataRow T={T} label="Who Cares">{bc.who_cares}</DataRow>
+        <DataRow T={T} label="Who Signs">{bc.who_signs}</DataRow>
+        <DataRow T={T} label="Who Influences">{bc.who_influences}</DataRow>
+        <DataRow T={T} label="Who Blocks">{bc.who_blocks}</DataRow>
+      </SectionCard>
+    </div>
+  );
+}
+
+function ChannelTab({ T, strategy }) {
+  const cs = strategy.channel_strategy || {};
+  const pacing = cs.pacing || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Primary Channel">
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.accent }}>{cs.primary_channel}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Channel Breakdown">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr>
+                {['Channel', 'Usage', 'Daily Volume', 'Notes'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${T.border}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(cs.channel_breakdown || []).map((row, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '10px 12px', fontWeight: 600, color: T.text, borderBottom: `1px solid ${T.border}` }}>{row.channel}</td>
+                  <td style={{ padding: '10px 12px', borderBottom: `1px solid ${T.border}` }}><Badge T={T} color={row.usage === 'Primary' ? 'green' : row.usage === 'Secondary' ? 'orange' : 'gray'}>{row.usage}</Badge></td>
+                  <td style={{ padding: '10px 12px', color: T.textMuted, borderBottom: `1px solid ${T.border}` }}>{row.daily_volume}</td>
+                  <td style={{ padding: '10px 12px', color: T.text, lineHeight: 1.5, borderBottom: `1px solid ${T.border}` }}>{row.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Pacing">
+          <DataRow T={T} label="Ramp Week 1">{pacing.ramp_week_1}</DataRow>
+          <DataRow T={T} label="Steady State">{pacing.steady_state}</DataRow>
+          <DataRow T={T} label="Multi-Sender">{pacing.multi_sender}</DataRow>
+        </SectionCard>
+        <SectionCard T={T} title="Warm vs Cold">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cs.warm_vs_cold}</div>
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+function MessagingTab({ T, strategy }) {
+  const ma = strategy.messaging_angles || {};
+  const lw = ma.lead_with || {};
+  return (
+    <div>
+      {(ma.angles || []).map((angle, i) => (
+        <SectionCard key={i} T={T} style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>{angle.name}</div>
+            <div style={{ minWidth: 140 }}><ScoreBar T={T} score={angle.strength || 0} /></div>
+          </div>
+          <DataRow T={T} label="Description">{angle.description}</DataRow>
+          <DataRow T={T} label="When to Use">{angle.when_to_use}</DataRow>
+          <DataRow T={T} label="Example Hook">
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontStyle: 'italic', flex: 1 }}>{angle.example_hook}</span>
+              <CopyBtn T={T} text={angle.example_hook} />
+            </div>
+          </DataRow>
+        </SectionCard>
+      ))}
+      <SectionCard T={T} title="Lead-With Strategy">
+        <DataRow T={T} label="Insight">{lw.insight}</DataRow>
+        <DataRow T={T} label="Curiosity">{lw.curiosity}</DataRow>
+        <DataRow T={T} label="Credibility">{lw.credibility}</DataRow>
+      </SectionCard>
+      <SectionCard T={T} title="Never Say">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(ma.never_say || []).map((s, i) => (
+            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>\u2717 {s}</span>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function ValuePropTab({ T, strategy }) {
+  const vp = strategy.value_prop_framing || {};
+  const oe = vp.outcome_emphasis || {};
+  const pp = vp.proof_point_strategy || {};
+  return (
+    <div>
+      <SectionCard T={T} title="First Touch Simplification">
+        <div style={{ fontSize: 14, lineHeight: 1.7, color: T.text, fontStyle: 'italic' }}>\u201c{vp.first_touch_simplification}\u201d</div>
+      </SectionCard>
+      <SectionCard T={T} title="Outcome Emphasis">
+        <DataRow T={T} label="Primary">{oe.primary}</DataRow>
+        <DataRow T={T} label="Secondary">{oe.secondary}</DataRow>
+        <DataRow T={T} label="Tertiary">{oe.tertiary}</DataRow>
+      </SectionCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Hint in Outreach">
+          <BulletList T={T} items={pp.hint_in_outreach} />
+        </SectionCard>
+        <SectionCard T={T} title="Save for Calls">
+          <BulletList T={T} items={pp.save_for_calls} />
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+function MeetingTab({ T, strategy }) {
+  const mb = strategy.meeting_booking || {};
+  const cta = mb.cta_style || {};
+  return (
+    <div>
+      <SectionCard T={T} title="CTA Style">
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+          <Badge T={T} color="green">{cta.recommended}</Badge>
+        </div>
+        <DataRow T={T} label="Description">{cta.description}</DataRow>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Examples</div>
+          {(cta.examples || []).map((ex, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '10px 14px', background: T.bgInput, borderRadius: 8, marginBottom: 8, gap: 12 }}>
+              <span style={{ fontSize: 13, color: T.text, fontStyle: 'italic', flex: 1 }}>\u201c{ex}\u201d</span>
+              <CopyBtn T={T} text={ex} />
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Calendar Link Timing">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{mb.calendar_link_timing}</div>
+      </SectionCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Friction Reduction">
+          <BulletList T={T} items={mb.friction_reduction} />
+        </SectionCard>
+        <SectionCard T={T} title="No-Show Prevention">
+          <BulletList T={T} items={mb.no_show_prevention} />
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+function SalesNavTab({ T, strategy }) {
+  const sn = strategy.sales_nav || {};
+  const rf = sn.recommended_filters || {};
+  const tp = sn.title_patterns || {};
+
+  const exportCSV = () => {
+    const clusters = strategy.targeting?.title_clusters || [];
+    let csv = 'Cluster,Title,Notes\n';
+    clusters.forEach(c => {
+      (c.titles || []).forEach(t => { csv += `"${c.cluster}","${t}","${c.notes}"\n`; });
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'ridge_title_clusters.csv'; a.click();
+  };
+
+  return (
+    <div>
+      <SectionCard T={T} title="Recommended Filters">
+        <DataRow T={T} label="Geography">{(rf.geography || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Company Size">{rf.company_size ? `${rf.company_size.min}\u2013${rf.company_size.max} employees` : '\u2014'}</DataRow>
+        <DataRow T={T} label="Industries">{(rf.industries || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Seniority">{(rf.seniority || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Exclude Industries">{(rf.exclude_industries || []).join(', ')}</DataRow>
+      </SectionCard>
+      <SectionCard T={T} title="Title Patterns">
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>High Performers</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {(tp.high_performers || []).map((t, i) => (
+              <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.greenBg, color: T.green, fontWeight: 500 }}>{t}</span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Boolean Search String</div>
+          <div style={{ position: 'relative' }}>
+            <div style={{ background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12, fontFamily: 'monospace', color: T.text, lineHeight: 1.6, paddingRight: 80 }}>
+              {tp.boolean_string}
+            </div>
+            <div style={{ position: 'absolute', top: 8, right: 8 }}>
+              <CopyBtn T={T} text={tp.boolean_string || ''} />
+            </div>
+          </div>
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Profile Red Flags">
+        {(sn.profile_red_flags || []).map((f, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <span style={{ color: T.red, flexShrink: 0 }}>\u2691</span>
+            <span style={{ fontSize: 13, color: T.text }}>{f}</span>
+          </div>
+        ))}
+      </SectionCard>
+      <div style={{ marginTop: 8 }}>
+        <Btn T={T} variant="outline" small onClick={exportCSV}>\u2b07 Export Title Clusters CSV</Btn>
+      </div>
+    </div>
+  );
+}
+
+function RiskTab({ T, strategy }) {
+  const cr = strategy.campaign_risks || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Likely Objections">
+        {(cr.likely_objections || []).map((o, i) => (
+          <div key={i} style={{ marginBottom: 14, padding: '12px 14px', background: T.bgInput, borderRadius: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>\u275d {o.objection}</div>
+            <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}><strong style={{ color: T.accent }}>Response angle:</strong> {o.response_angle}</div>
+          </div>
+        ))}
+      </SectionCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="Success Signals">
+          {(cr.success_signals || []).map((s, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+              <span style={{ color: T.green }}>\u2713</span>
+              <span style={{ fontSize: 13, color: T.text }}>{s}</span>
+            </div>
+          ))}
+        </SectionCard>
+        <SectionCard T={T} title="Failure Signals">
+          {(cr.failure_signals || []).map((s, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+              <span style={{ color: T.red }}>\u2717</span>
+              <span style={{ fontSize: 13, color: T.text }}>{s}</span>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Week 1\u20132 Adjustments">
+        <BulletList T={T} items={cr.week_1_2_adjustments} />
+      </SectionCard>
+    </div>
+  );
+}
+
+function FlowTab({ T, strategy }) {
+  const cf = strategy.conversation_flow || {};
+  const msgs = [cf.message_1, cf.message_2, cf.message_3].filter(Boolean);
+  return (
+    <div>
+      <SectionCard T={T} title="Connect Note">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, fontSize: 13, color: T.text, lineHeight: 1.7, fontStyle: 'italic' }}>\u201c{cf.connect_note}\u201d</div>
+          <CopyBtn T={T} text={cf.connect_note || ''} />
+        </div>
+      </SectionCard>
+      {msgs.map((msg, i) => {
+        const scoreColor = (msg.quality_score || 0) >= 80 ? 'green' : (msg.quality_score || 0) >= 60 ? 'orange' : 'red';
+        return (
+          <SectionCard key={i} T={T} style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Message {i + 1}: {msg.label}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Badge T={T} color={scoreColor}>Quality: {msg.quality_score}</Badge>
+                <CopyBtn T={T} text={msg.text || ''} />
+              </div>
+            </div>
+            <div style={{ background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, padding: '14px 16px', fontSize: 13, color: T.text, lineHeight: 1.8, whiteSpace: 'pre-wrap', marginBottom: 8 }}>
+              {msg.text}
+            </div>
+            {msg.quality_notes && (
+              <div style={{ fontSize: 12, color: T.textMuted, fontStyle: 'italic', borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>
+                <strong>QA Note:</strong> {msg.quality_notes}
+              </div>
+            )}
+          </SectionCard>
+        );
+      })}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SectionCard T={T} title="CTA Rules">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cf.cta_rules}</div>
+        </SectionCard>
+        <SectionCard T={T} title="Tone Rules">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cf.tone_rules}</div>
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Strict Avoid List">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(cf.strict_avoid || []).map((s, i) => (
+            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>\u2717 {s}</span>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function FollowupTab({ T, strategy }) {
+  const fu = strategy.follow_up || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Cadence">
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.accent }}>{fu.cadence}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Philosophy">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{fu.philosophy}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Themed Touches">
+        {(fu.themes || []).map((t, i) => (
+          <div key={i} style={{ display: 'flex', gap: 16, marginBottom: 14, paddingBottom: 14, borderBottom: i < (fu.themes.length - 1) ? `1px solid ${T.border}` : 'none', flexWrap: 'wrap' }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: T.greenBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, color: T.accent, flexShrink: 0 }}>{t.touch}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.theme}</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>{t.angle}</div>
+            </div>
+          </div>
+        ))}
+      </SectionCard>
+    </div>
+  );
+}
+
+function ExecTab({ T, strategy }) {
+  const en = strategy.ridge_execution_notes || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Personalization">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.personalization}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Message Philosophy">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.message_philosophy}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Quality Benchmark">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.quality_benchmark}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Risks">
+        {(en.risks || []).map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <span style={{ color: T.orange }}>\u26a0</span>
+            <span style={{ fontSize: 13, color: T.text }}>{r}</span>
+          </div>
+        ))}
+      </SectionCard>
+      <SectionCard T={T} title="Next Steps">
+        <ol style={{ paddingLeft: 20, margin: 0 }}>
+          {(en.next_steps || []).map((s, i) => (
+            <li key={i} style={{ fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 6 }}>{s}</li>
+          ))}
+        </ol>
+      </SectionCard>
+    </div>
+  );
+}
+
+function StrategyView({ T, strategy, workspaceId }) {
+  const [activeTab, setActiveTab] = useState('icp');
+  const [editMode, setEditMode] = useState(false);
+  const [strat, setStrat] = useState(strategy);
+  const [saveState, setSaveState] = useState('saved');
+  const saveTimer = useRef(null);
+
+  const updateStrategy = (newStrat) => {
+    setStrat(newStrat);
+    setSaveState('unsaved');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      setSaveState('saving');
+      apiFetch('/strategy', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: newStrat }) })
+        .then(() => { setSaveState('saved'); showToast('Strategy saved'); });
+    }, 800);
+  };
+
+  const renderTab = () => {
+    const props = { T, strategy: strat, editMode, onChange: updateStrategy };
+    switch (activeTab) {
+      case 'icp': return <ICPTab {...props} />;
+      case 'dm': return <DMTab T={T} strategy={strat} editMode={editMode} onChange={updateStrategy} />;
+      case 'channel': return <ChannelTab {...props} />;
+      case 'messaging': return <MessagingTab {...props} />;
+      case 'valueprop': return <ValuePropTab {...props} />;
+      case 'meeting': return <MeetingTab {...props} />;
+      case 'salesnav': return <SalesNavTab {...props} />;
+      case 'risk': return <RiskTab {...props} />;
+      case 'flow': return <FlowTab {...props} />;
+      case 'followup': return <FollowupTab {...props} />;
+      case 'exec': return <ExecTab {...props} />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div>
+      <Card T={T} style={{ padding: 20, marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Generated Strategy</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: T.text, letterSpacing: '-0.3px', marginBottom: 6 }}>{strat.client_name || 'Strategy'}</div>
+            {strat.offer_summary && <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6, maxWidth: 640 }}>{strat.offer_summary}</div>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: T.textMuted, minWidth: 60 }}>
+              {saveState === 'saving' ? '\u23f3 Saving\u2026' : saveState === 'unsaved' ? '\u25cf Unsaved' : '\u2713 Saved'}
+            </span>
+            <Btn T={T} variant={editMode ? 'primary' : 'outline'} small onClick={() => setEditMode(!editMode)}>
+              {editMode ? '\u2713 Done Editing' : '\u270f Edit Mode'}
+            </Btn>
+          </div>
+        </div>
+      </Card>
+      <StrategyTabs T={T} activeTab={activeTab} onSelect={setActiveTab} />
+      <div style={{ marginTop: 4 }}>{renderTab()}</div>
+    </div>
+  );
+}
+
+function WorkspaceDetail({ T, workspace, onBack, onDeleted, user }) {
+  const [ws, setWs] = useState(workspace);
+  const [activeTab, setActiveTab] = useState('intake');
+  const [strategy, setStrategy] = useState(null);
+  const [stratLoaded, setStratLoaded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [currentIntake, setCurrentIntake] = useState(null);
+
+  useEffect(() => {
+    apiFetch(`/strategy?workspace_id=${ws.id}`).then(data => {
+      if (data && Object.keys(data).length > 0) setStrategy(data);
+      setStratLoaded(true);
+    });
+    apiFetch(`/intake?workspace_id=${ws.id}`).then(data => {
+      if (data && Object.keys(data).length > 0) setCurrentIntake(data);
+    });
+  }, [ws.id]);
+
+  const updateStatus = async (newStatus) => {
+    const updated = { ...ws, status: newStatus };
+    setWs(updated);
+    await apiFetch('/workspaces', { method: 'PUT', body: JSON.stringify({ id: ws.id, status: newStatus }) });
+  };
+
+  const deleteWorkspace = async () => {
+    await apiFetch(`/workspaces?id=${ws.id}`, { method: 'DELETE' });
+    onDeleted();
+  };
+
+  return (
+    <div style={{ padding: '20px 24px', maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.textMuted, fontSize: 13, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+            \u2190 Back
+          </button>
+          <div style={{ fontSize: 20, fontWeight: 800, color: T.text, letterSpacing: '-0.4px' }}>{ws.name}</div>
+          <Badge T={T} color={statusColor(ws.status, T)}>{statusLabel(ws.status)}</Badge>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Select T={T} value={ws.status} onChange={e => updateStatus(e.target.value)} options={[
+            { value: 'active', label: 'Active' },
+            { value: 'strategy_complete', label: 'Strategy Complete' },
+            { value: 'pending_intake', label: 'Pending Intake' },
+            { value: 'paused', label: 'Paused' },
+            { value: 'archived', label: 'Archived' },
+          ]} />
+          {!confirmDelete ? (
+            <Btn T={T} variant="danger" small onClick={() => setConfirmDelete(true)}>Delete</Btn>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: T.red }}>Confirm?</span>
+              <Btn T={T} variant="danger" small onClick={deleteWorkspace}>Yes, Delete</Btn>
+              <Btn T={T} variant="outline" small onClick={() => setConfirmDelete(false)}>Cancel</Btn>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {(ws.website || ws.client_email || ws.notes) && (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16, fontSize: 13, color: T.textMuted }}>
+          {ws.website && <span>\ud83c\udf10 <a href={ws.website} target="_blank" rel="noopener" style={{ color: T.accent, textDecoration: 'none' }}>{ws.website}</a></span>}
+          {ws.client_email && <span>\u2709 {ws.client_email}</span>}
+          {ws.created_at && <span>\ud83d\udcc5 Created {ws.created_at.slice(0,10)}</span>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+        {[{ id: 'intake', label: 'Intake Form' }, { id: 'strategy', label: 'Strategy Output' }].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: activeTab === t.id ? T.accent : T.bgCard,
+            color: activeTab === t.id ? '#fff' : T.textMuted,
+            border: activeTab === t.id ? 'none' : `1px solid ${T.border}`,
+            cursor: 'pointer', transition: 'all 0.15s',
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {activeTab === 'intake' && (
+        <IntakeForm T={T} workspaceId={ws.id} onIntakeChange={setCurrentIntake} />
+      )}
+
+      {activeTab === 'strategy' && (
+        <div>
+          <StrategyGenerator T={T} workspaceId={ws.id} intake={currentIntake} onStrategyGenerated={s => {
+            setStrategy(s);
+            updateStatus('strategy_complete');
+          }} />
+          {strategy && stratLoaded && (
+            <StrategyView T={T} strategy={strategy} workspaceId={ws.id} />
+          )}
+          {!strategy && stratLoaded && (
+            <div style={{ textAlign: 'center', padding: 60, color: T.textMuted, fontSize: 14 }}>
+              No strategy generated yet. Fill in the intake form and click "Run Strategy".
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ManageAccountsModal({ T, onClose, currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('client');
+  const [newWsId, setNewWsId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [resetPwdUser, setResetPwdUser] = useState(null);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  const load = async () => {
+    const [u, w] = await Promise.all([apiFetch('/users'), apiFetch('/workspaces')]);
+    if (Array.isArray(u)) setUsers(u);
+    if (Array.isArray(w)) setWorkspaces(w);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const createUser = async () => {
+    if (!newEmail || !newPassword) return;
+    setCreating(true); setCreateError('');
+    const res = await apiFetch('/users', {
+      method: 'POST',
+      body: JSON.stringify({ email: newEmail, password: newPassword, name: newName, role: newRole, workspace_id: newWsId }),
+    });
+    setCreating(false);
+    if (res.error) { setCreateError(res.error); return; }
+    setNewEmail(''); setNewName(''); setNewPassword(''); setNewRole('client'); setNewWsId('');
+    load();
+  };
+
+  const deleteUser = async (uid) => {
+    await apiFetch(`/users?id=${uid}`, { method: 'DELETE' });
+    setConfirmDeleteUser(null); load();
+  };
+
+  const resetPassword = async () => {
+    if (!resetPwdUser || !newPwd) return;
+    await apiFetch('/users/password', { method: 'POST', body: JSON.stringify({ id: resetPwdUser.id, password: newPwd }) });
+    setResetPwdUser(null); setNewPwd('');
+  };
+
+  return (
+    <ModalOverlay T={T} onClose={onClose}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 20 }}>Manage Accounts</div>
+      {loading ? (
+        <div style={{ color: T.textMuted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading\u2026</div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 24, padding: 16, background: T.bg, borderRadius: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 12 }}>Create New Account</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <Input T={T} value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email *" type="email" />
+              <Input T={T} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Name" />
+              <Input T={T} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password *" type="password" />
+              <Select T={T} value={newRole} onChange={e => setNewRole(e.target.value)} options={[
+                { value: 'client', label: 'Client' }, { value: 'ridge_admin', label: 'Ridge Admin' },
+              ]} style={{ width: '100%' }} />
+              {newRole === 'client' && (
+                <Select T={T} value={newWsId} onChange={e => setNewWsId(e.target.value)} options={[
+                  { value: '', label: 'No workspace' },
+                  ...workspaces.map(w => ({ value: w.id, label: w.name })),
+                ]} style={{ width: '100%' }} />
+              )}
+            </div>
+            {createError && <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>{createError}</div>}
+            <Btn T={T} small onClick={createUser} disabled={creating || !newEmail || !newPassword}>
+              {creating ? 'Creating\u2026' : '+ Create Account'}
+            </Btn>
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 10 }}>All Accounts ({users.length})</div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {users.map(u => (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${T.border}`, gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{u.name || u.email}</div>
+                  <div style={{ fontSize: 12, color: T.textMuted }}>{u.email} \u00b7 <Badge T={T} color={u.role === 'ridge_admin' ? 'green' : 'orange'}>{u.role}</Badge></div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  {resetPwdUser?.id === u.id ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Input T={T} value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="New password" type="password" style={{ width: 140 }} />
+                      <Btn T={T} small onClick={resetPassword} disabled={!newPwd}>Save</Btn>
+                      <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(null)}>\u2715</Btn>
+                    </div>
+                  ) : (
+                    <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(u)}>Reset Password</Btn>
+                  )}
+                  {confirmDeleteUser === u.id ? (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <Btn T={T} variant="danger" small onClick={() => deleteUser(u.id)}>Confirm</Btn>
+                      <Btn T={T} variant="outline" small onClick={() => setConfirmDeleteUser(null)}>\u2715</Btn>
+                    </div>
+                  ) : (
+                    u.id !== currentUser?.id && (
+                      <Btn T={T} variant="danger" small onClick={() => setConfirmDeleteUser(u.id)}>Delete</Btn>
+                    )
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+        <Btn T={T} variant="outline" onClick={onClose}>Close</Btn>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function ClientPortal({ T, user, workspaceId }) {
+  const [ws, setWs] = useState(null);
+  const [strategy, setStrategy] = useState(null);
+  const [activeView, setActiveView] = useState('overview');
+
+  useEffect(() => {
+    apiFetch('/workspaces').then(data => {
+      if (Array.isArray(data)) {
+        const found = data.find(w => w.id === workspaceId) || data[0];
+        setWs(found);
+      }
+    });
+    apiFetch(`/strategy?workspace_id=${workspaceId}`).then(data => {
+      if (data && Object.keys(data).length > 0) setStrategy(data);
+    });
+  }, [workspaceId]);
+
+  if (!ws) return <div style={{ padding: 40, textAlign: 'center', color: T.textMuted }}>Loading workspace\u2026</div>;
+
+  return (
+    <div style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 24px' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
+        {[{ id: 'overview', label: '\ud83d\udcca Overview' }, { id: 'intake', label: '\ud83d\udccb Intake' }, { id: 'strategy', label: '\ud83c\udfaf Strategy' }].map(v => (
+          <button key={v.id} onClick={() => setActiveView(v.id)} style={{
+            padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: activeView === v.id ? T.accent : T.bgCard,
+            color: activeView === v.id ? '#fff' : T.textMuted,
+            border: activeView === v.id ? 'none' : `1px solid ${T.border}`,
+            cursor: 'pointer',
+          }}>{v.label}</button>
+        ))}
+      </div>
+
+      {activeView === 'overview' && (
+        <div>
+          <Card T={T} style={{ padding: 28, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: T.text, letterSpacing: '-0.4px', marginBottom: 6 }}>{ws.name}</div>
+                {ws.website && <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>{ws.website}</div>}
+                <Badge T={T} color={statusColor(ws.status, T)}>{statusLabel(ws.status)}</Badge>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div style={{ textAlign: 'center', padding: '12px 20px', background: T.bg, borderRadius: 10 }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: T.accent }}>{ws.intake_count || 0}</div>
+                  <div style={{ fontSize: 12, color: T.textMuted }}>Intake Saves</div>
+                </div>
+                <div style={{ textAlign: 'center', padding: '12px 20px', background: T.bg, borderRadius: 10 }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: T.accent }}>{ws.runs_count || 0}</div>
+                  <div style={{ fontSize: 12, color: T.textMuted }}>Strategy Runs</div>
+                </div>
+              </div>
+            </div>
+          </Card>
+          {ws.notes && (
+            <Card T={T} style={{ padding: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Notes</div>
+              <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{ws.notes}</div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {activeView === 'intake' && (
+        <IntakeForm T={T} workspaceId={ws.id} />
+      )}
+
+      {activeView === 'strategy' && (
+        <div>
+          {strategy ? (
+            <StrategyView T={T} strategy={strategy} workspaceId={ws.id} />
+          ) : (
+            <div style={{ textAlign: 'center', padding: 80, color: T.textMuted }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>\u23f3</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 8 }}>Strategy not yet generated</div>
+              <div style={{ fontSize: 13 }}>Your Ridge team will generate your strategy once the intake form is complete.</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminDashboard({ T, user, onLogout, mode, toggle }) {
+  const [view, setView] = useState('workspaces');
+  const [selectedWs, setSelectedWs] = useState(null);
+  const [showManageAccounts, setShowManageAccounts] = useState(false);
+
+  const wsName = selectedWs?.name;
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: T.bg, overflow: 'hidden' }}>
+      <TopBar T={T} mode={mode} toggle={toggle} user={user} onLogout={onLogout}
+        onManageAccounts={() => setShowManageAccounts(true)}
+        view={view} onViewChange={setView} wsName={wsName} />
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {selectedWs ? (
+          <WorkspaceDetail T={T} workspace={selectedWs} user={user}
+            onBack={() => setSelectedWs(null)}
+            onDeleted={() => { setSelectedWs(null); showToast('Workspace deleted'); }} />
+        ) : (
+          <WorkspacesView T={T} onSelect={ws => setSelectedWs(ws)} />
+        )}
+      </div>
+      {showManageAccounts && (
+        <ManageAccountsModal T={T} currentUser={user} onClose={() => setShowManageAccounts(false)} />
+      )}
+      <ToastContainer T={T} />
+    </div>
+  );
+}
+
+function ClientDashboard({ T, user, onLogout, mode, toggle }) {
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: T.bg, overflow: 'hidden' }}>
+      <div style={{
+        height: 56, background: T.topBar, borderBottom: `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', padding: '0 20px', gap: 16, flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <RidgeLogo T={T} size={24} />
+        </div>
+        <div style={{ flex: 1 }} />
+        <ThemeToggle T={T} mode={mode} toggle={toggle} />
+        <span style={{ fontSize: 13, fontWeight: 500, color: T.textMuted }}>{user?.name || user?.email}</span>
+        <button onClick={onLogout} style={{ fontSize: 12, color: T.textMuted, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px', borderRadius: 6 }}>Sign out</button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        <ClientPortal T={T} user={user} workspaceId={user.workspace_id} />
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const { T, mode, toggle, setMode } = useTheme();
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get('token');
+    if (tokenFromUrl) SESSION_TOKEN = tokenFromUrl;
+
+    const timeout = setTimeout(() => setAuthChecked(true), 4000);
+    apiFetch('/auth/session').then(data => {
+      clearTimeout(timeout);
+      if (data?.user) {
+        setUser(data.user);
+      }
+      apiFetch('/settings?key=theme').then(d => {
+        if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
+      });
+      setAuthChecked(true);
+    }).catch(() => { clearTimeout(timeout); setAuthChecked(true); });
+  }, []);
+
+  const handleLogin = (userData, token) => {
+    SESSION_TOKEN = token;
+    setUser(userData);
+    apiFetch('/settings?key=theme').then(d => {
+      if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
+    });
+  };
+
+  const handleLogout = async () => {
+    if (SESSION_TOKEN) {
+      await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ token: SESSION_TOKEN }) });
+    }
+    SESSION_TOKEN = null;
+    setUser(null);
+  };
+
+  if (!authChecked) {
+    return (
+      <div style={{ height: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <RidgeLogo T={T} size={44} />
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.textMuted, marginTop: 12, letterSpacing: '0.02em' }}>Strategy Engine</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>Loading\u2026</div>
+          <div style={{ marginTop: 24, width: 48, height: 4, borderRadius: 2, background: T.accent, opacity: 0.3, margin: '24px auto 0' }} />
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <LoginScreen T={T} onLogin={handleLogin} />;
+
+  if (user.role === 'ridge_admin') {
+    return <AdminDashboard T={T} user={user} onLogout={handleLogout} mode={mode} toggle={toggle} />;
+  }
+
+  return <ClientDashboard T={T} user={user} onLogout={handleLogout} mode={mode} toggle={toggle} />;
+}
+
+createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
