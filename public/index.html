@@ -34,7 +34,7 @@ textarea{resize:vertical}
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { createRoot } = ReactDOM;
 
-// ─── API Base ────────────────────────────────────────────
+// ─── API Base ───────────────────────────────────────────────────────────────
 const API = '/api';
 const AI_API = '/api/ai';
 
@@ -54,7 +54,7 @@ async function apiFetch(path, options = {}) {
   try { return JSON.parse(text); } catch { return {}; }
 }
 
-// ─── Design Tokens ────────────────────────────────────────────
+// ─── Design Tokens ───────────────────────────────────────────────────────────
 const LIGHT = {
   bg: '#F7F8F7', bgCard: '#FFFFFF', bgInput: '#F2F4F3',
   border: '#E2E5E3', text: '#1A1F1D', textMuted: '#6B7572',
@@ -74,7 +74,7 @@ const DARK = {
   topBar: '#171B19',
 };
 
-// ─── Demo Strategy Data ─────────────────────────────────────────────
+// ─── Demo Strategy Data ───────────────────────────────────────────────────────
 const DEMO_STRATEGY = {
   client_name: "Acme Corp",
   offer_summary: "B2B revenue intelligence platform that helps VP Sales teams at mid-market SaaS companies identify and close expansion revenue faster.",
@@ -307,7 +307,7 @@ const DEMO_STRATEGY = {
   },
 };
 
-// ─── Robust JSON Parser (multi-stage AI response repair) ──────────────────
+// ─── Robust JSON Parser (multi-stage AI response repair) ────────────────────
 function robustJsonParse(raw) {
   if (!raw || typeof raw !== 'string') throw new Error('Empty or non-string input');
   let s = raw.trim();
@@ -335,7 +335,7 @@ function robustJsonParse(raw) {
     fixed += c;
   }
   try { return JSON.parse(fixed); } catch {}
-  // Stage 9: Aggressive backward walk
+  // Stage 9: Aggressive backward walk — try parsing at each closing brace
   for (let i = fixed.length - 1; i >= 0; i--) {
     if (fixed[i] === '}') {
       try { return JSON.parse(fixed.slice(0, i + 1)); } catch {}
@@ -344,7 +344,7 @@ function robustJsonParse(raw) {
   throw new Error('JSON parse failed after all repair stages. Raw: ' + s.slice(0, 100));
 }
 
-// ─── Toast Notification System ────────────────────────────────────────────
+// ─── Toast Notification System ──────────────────────────────────────────────
 const toastListeners = [];
 function showToast(message, type = 'success') {
   toastListeners.forEach(fn => fn({ message, type, id: Date.now() }));
@@ -369,7 +369,7 @@ function ToastContainer({ T }) {
           boxShadow: '0 4px 12px rgba(0,0,0,0.15)', animation: 'slideIn 0.2s ease',
           display: 'flex', alignItems: 'center', gap: 8, maxWidth: 320,
         }}>
-          <span>{t.type === 'error' ? '\u2715' : t.type === 'warning' ? '\u26a0' : '\u2713'}</span>
+          <span>{t.type === 'error' ? '✕' : t.type === 'warning' ? '⚠' : '✓'}</span>
           {t.message}
         </div>
       ))}
@@ -377,6 +377,7 @@ function ToastContainer({ T }) {
   );
 }
 
+// ─── Skeleton Loader ──────────────────────────────────────────────────────────
 function Skeleton({ T, width = '100%', height = 16, style = {} }) {
   return (
     <div style={{
@@ -385,6 +386,7 @@ function Skeleton({ T, width = '100%', height = 16, style = {} }) {
     }} />
   );
 }
+
 
 function useTheme() {
   const [mode, setMode] = useState('light');
@@ -502,7 +504,7 @@ function CopyBtn({ T, text, small = true }) {
       border: `1px solid ${T.border}`, background: T.bgCard, color: copied ? T.green : T.textMuted,
       cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, transition: 'all 0.15s',
     }}>
-      {copied ? '\u2713 Copied' : '\u2358 Copy'}
+      {copied ? '✓ Copied' : '⎘ Copy'}
     </button>
   );
 }
@@ -514,14 +516,17 @@ function ThemeToggle({ T, mode, toggle }) {
       justifyContent: 'center', border: `1px solid ${T.border}`, background: T.bgCard,
       cursor: 'pointer', fontSize: 16, color: T.text, flexShrink: 0,
     }}>
-      {mode === 'light' ? '\u263e' : '\u2600'}
+      {mode === 'light' ? '☾' : '☀'}
     </button>
   );
 }
 
+// ─── Ridge SVG Logo ───────────────────────────────────────────────────────────
 function RidgeLogo({ T, size = 28, mode }) {
+  // Use the real Ridge logo images — light mode = dark green logo, dark mode = white logo
   const isLight = T.bg === '#F7F8F7' || T.bg === LIGHT.bg;
-  const src = isLight ? './logo-light.png' : './logo-dark.png';
+  const src = isLight ? './logo-light-sm.png' : './logo-dark-sm.png';
+  // The logo is wide format (roughly 3.65:1 ratio), so scale by height
   const height = size;
   const width = Math.round(size * 3.65);
   return (
@@ -529,6 +534,7 @@ function RidgeLogo({ T, size = 28, mode }) {
   );
 }
 
+// ─── Status helpers ───────────────────────────────────────────────────────────
 function statusColor(status, T) {
   const m = { active: 'green', strategy_complete: 'green', paused: 'orange', archived: 'gray', pending_intake: 'orange' };
   return m[status] || 'green';
@@ -538,6 +544,7 @@ function statusLabel(status) {
   return m[status] || status;
 }
 
+// ─── Inline Editable Field ────────────────────────────────────────────────────
 function EditableField({ T, value, onChange, multiline = false, editMode = false, rows = 3, style = {} }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
@@ -555,6 +562,7 @@ function EditableField({ T, value, onChange, multiline = false, editMode = false
   );
 }
 
+// ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ T, onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -593,20 +601,22 @@ function LoginScreen({ T, onLogin }) {
             </div>
             <div>
               <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Password</label>
-              <Input T={T} value={password} onChange={e => setPassword(e.target.value)} placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" type="password"
+              <Input T={T} value={password} onChange={e => setPassword(e.target.value)} placeholder="········" type="password"
                 style={{ letterSpacing: password ? '0.1em' : 'normal' }} />
             </div>
             {error && <div style={{ fontSize: 13, color: T.red, background: T.redBg, padding: '8px 12px', borderRadius: 6 }}>{error}</div>}
             <Btn T={T} onClick={handleLogin} disabled={loading || !email || !password} style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}>
-              {loading ? 'Signing in\u2026' : 'Sign In'}
+              {loading ? 'Signing in…' : 'Sign In'}
             </Btn>
           </div>
         </Card>
+
       </div>
     </div>
   );
 }
 
+// ─── Top Bar ─────────────────────────────────────────────────────────────────
 function TopBar({ T, mode, toggle, user, onLogout, onManageAccounts, view, onViewChange, wsName }) {
   return (
     <div style={{
@@ -648,6 +658,7 @@ function TopBar({ T, mode, toggle, user, onLogout, onManageAccounts, view, onVie
   );
 }
 
+// ─── Workspace Card ───────────────────────────────────────────────────────────
 function WorkspaceCard({ T, ws, onClick }) {
   const sc = statusColor(ws.status, T);
   return (
@@ -668,6 +679,7 @@ function WorkspaceCard({ T, ws, onClick }) {
   );
 }
 
+// ─── Create Workspace Modal ───────────────────────────────────────────────────
 function CreateWorkspaceModal({ T, onClose, onCreated }) {
   const [name, setName] = useState('');
   const [website, setWebsite] = useState('');
@@ -694,10 +706,10 @@ function CreateWorkspaceModal({ T, onClose, onCreated }) {
         <Field T={T} label="Company Name *"><Input T={T} value={name} onChange={e => setName(e.target.value)} placeholder="Acme Corp" /></Field>
         <Field T={T} label="Website"><Input T={T} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://acme.com" /></Field>
         <Field T={T} label="Client Email"><Input T={T} value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="contact@acme.com" /></Field>
-        <Field T={T} label="Notes"><Input T={T} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Internal notes\u2026" multiline rows={2} /></Field>
+        <Field T={T} label="Notes"><Input T={T} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Internal notes…" multiline rows={2} /></Field>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
           <Btn T={T} variant="outline" onClick={onClose}>Cancel</Btn>
-          <Btn T={T} onClick={submit} disabled={loading || !name}>{loading ? 'Creating\u2026' : 'Create Workspace'}</Btn>
+          <Btn T={T} onClick={submit} disabled={loading || !name}>{loading ? 'Creating…' : 'Create Workspace'}</Btn>
         </div>
       </div>
     </ModalOverlay>
@@ -726,6 +738,7 @@ function Field({ T, label, children }) {
   );
 }
 
+// ─── Workspaces List View ─────────────────────────────────────────────────────
 function WorkspacesView({ T, onSelect }) {
   const [workspaces, setWorkspaces] = useState([]);
   const [search, setSearch] = useState('');
@@ -755,7 +768,7 @@ function WorkspacesView({ T, onSelect }) {
           <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{workspaces.length} workspace{workspaces.length !== 1 ? 's' : ''}</div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Input T={T} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workspaces\u2026" style={{ width: 220 }} />
+          <Input T={T} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workspaces…" style={{ width: 220 }} />
           <Select T={T} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} options={[
             { value: 'all', label: 'All Statuses' },
             { value: 'active', label: 'Active' },
@@ -769,10 +782,10 @@ function WorkspacesView({ T, onSelect }) {
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', color: T.textMuted, padding: 60, fontSize: 14 }}>Loading workspaces\u2026</div>
+        <div style={{ textAlign: 'center', color: T.textMuted, padding: 60, fontSize: 14 }}>Loading workspaces…</div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 80 }}>
-          <div style={{ fontSize: 40, marginBottom: 16 }}>\ud83d\udccb</div>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
           <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 8 }}>No workspaces found</div>
           <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 20 }}>Create your first workspace to get started.</div>
           <Btn T={T} onClick={() => setShowCreate(true)}>+ Create Workspace</Btn>
@@ -794,6 +807,7 @@ function WorkspacesView({ T, onSelect }) {
   );
 }
 
+// ─── Intake Form ──────────────────────────────────────────────────────────────
 const INTAKE_DEFAULTS = {
   company: { name: '', website: '', description: '', size_range: '', industry: '' },
   offer: { name: '', description: '', pricing_model: '', avg_deal_size: '', differentiators: '' },
@@ -815,6 +829,7 @@ function deepMerge(target, source) {
   return result;
 }
 
+// Merge scanned/imported data into intake — only fills empty fields
 function mergeIntoEmpty(existing, scanned) {
   const result = JSON.parse(JSON.stringify(existing));
   for (const section in scanned) {
@@ -835,6 +850,7 @@ function mergeIntoEmpty(existing, scanned) {
   return result;
 }
 
+// Build compact intake block for strategy prompts
 function buildIntakeBlock(intake) {
   const i = intake;
   return `Company: ${i.company.name} | ${i.company.website} | ${i.company.industry} | Size: ${i.company.size_range} | ${i.company.description}
@@ -855,7 +871,7 @@ function IntakeSection({ T, title, icon, children, defaultOpen = false }) {
         color: T.text, fontWeight: 700, fontSize: 14, fontFamily: 'inherit',
       }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{icon} {title}</span>
-        <span style={{ color: T.textMuted, fontSize: 16, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>\u25be</span>
+        <span style={{ color: T.textMuted, fontSize: 16, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▾</span>
       </button>
       {open && <div style={{ padding: '4px 18px 18px', borderTop: `1px solid ${T.border}` }}>{children}</div>}
     </Card>
@@ -915,7 +931,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
 
   const handleScan = async () => {
     if (!scanUrl) return;
-    setScanning(true); setScanMsg('Scanning website with AI + web search\u2026');
+    setScanning(true); setScanMsg('Scanning website with AI + web search…');
     try {
       const res = await fetch(AI_API, {
         method: 'POST',
@@ -928,7 +944,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
         const merged = mergeIntoEmpty(intake, parsed);
         setIntake(merged); save(merged);
         setScanMsg(`Scan complete via ${result.provider} (${result.model}). Empty fields filled from web research.`);
-        showToast('Website scanned \u2014 data merged into empty fields', 'success');
+        showToast('Website scanned — data merged into empty fields', 'success');
       } else {
         setScanMsg('Scan failed: ' + (result.error || 'Unknown error'));
         showToast('Website scan failed', 'error');
@@ -942,7 +958,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
 
   const handleImport = async () => {
     if (!notes) return;
-    setImporting(true); setImportMsg('Extracting structured data from meeting notes with AI\u2026');
+    setImporting(true); setImportMsg('Extracting structured data from meeting notes with AI…');
     try {
       const res = await fetch(AI_API, {
         method: 'POST',
@@ -955,7 +971,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
         const merged = mergeIntoEmpty(intake, parsed);
         setIntake(merged); save(merged);
         setImportMsg(`Import complete via ${result.provider}. Data extracted and merged into empty fields.`);
-        showToast('Meeting notes imported \u2014 data merged', 'success');
+        showToast('Meeting notes imported — data merged', 'success');
       } else {
         setImportMsg('Import failed: ' + (result.error || 'Unknown error'));
         showToast('Notes import failed', 'error');
@@ -969,27 +985,30 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
 
   return (
     <div>
+      {/* Scanner */}
       <Card T={T} style={{ padding: 18, marginBottom: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>\ud83d\udd0d Website Scanner</div>
+        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>🔍 Website Scanner</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Input T={T} value={scanUrl} onChange={e => setScanUrl(e.target.value)} placeholder="https://company.com" style={{ flex: 1, minWidth: 200 }} />
-          <Btn T={T} onClick={handleScan} disabled={scanning || !scanUrl}>{scanning ? 'Scanning\u2026' : 'Scan Website'}</Btn>
+          <Btn T={T} onClick={handleScan} disabled={scanning || !scanUrl}>{scanning ? 'Scanning…' : 'Scan Website'}</Btn>
         </div>
         {scanMsg && <div style={{ marginTop: 8, fontSize: 12, color: T.textMuted, fontStyle: 'italic' }}>{scanMsg}</div>}
       </Card>
 
+      {/* Meeting Notes */}
       <Card T={T} style={{ padding: 18, marginBottom: 20 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>\ud83d\udccb Meeting Notes Import</div>
+        <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 12 }}>📋 Meeting Notes Import</div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
           <Select T={T} value={notesSource} onChange={e => setNotesSource(e.target.value)}
             options={[{ value: 'Circleback', label: 'Circleback' }, { value: 'Granola', label: 'Granola' }, { value: 'Fathom', label: 'Fathom' }, { value: 'Otter', label: 'Otter' }, { value: 'Raw Text', label: 'Raw Text' }]} />
         </div>
-        <Input T={T} value={notes} onChange={e => setNotes(e.target.value)} multiline rows={4} placeholder="Paste meeting notes here\u2026" style={{ marginBottom: 8 }} />
-        <Btn T={T} onClick={handleImport} disabled={importing || !notes} small>{importing ? 'Importing\u2026' : 'Import Notes'}</Btn>
+        <Input T={T} value={notes} onChange={e => setNotes(e.target.value)} multiline rows={4} placeholder="Paste meeting notes here…" style={{ marginBottom: 8 }} />
+        <Btn T={T} onClick={handleImport} disabled={importing || !notes} small>{importing ? 'Importing…' : 'Import Notes'}</Btn>
         {importMsg && <div style={{ marginTop: 8, fontSize: 12, color: T.textMuted, fontStyle: 'italic' }}>{importMsg}</div>}
       </Card>
 
-      <IntakeSection T={T} title="Company" icon="\ud83c\udfe2" defaultOpen={true}>
+      {/* Sections */}
+      <IntakeSection T={T} title="Company" icon="🏢" defaultOpen={true}>
         <IntakeField T={T} label="Company Name" value={intake.company.name} onChange={e => update('company', 'name', e.target.value)} />
         <IntakeField T={T} label="Website" value={intake.company.website} onChange={e => update('company', 'website', e.target.value)} />
         <IntakeField T={T} label="Description" value={intake.company.description} onChange={e => update('company', 'description', e.target.value)} multiline rows={3} hint="What does the company do?" />
@@ -999,7 +1018,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
         </div>
       </IntakeSection>
 
-      <IntakeSection T={T} title="Offer" icon="\ud83d\udcbc">
+      <IntakeSection T={T} title="Offer" icon="💼">
         <IntakeField T={T} label="Offer Name" value={intake.offer.name} onChange={e => update('offer', 'name', e.target.value)} />
         <IntakeField T={T} label="Description" value={intake.offer.description} onChange={e => update('offer', 'description', e.target.value)} multiline rows={3} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1009,7 +1028,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
         <IntakeField T={T} label="Differentiators" value={intake.offer.differentiators} onChange={e => update('offer', 'differentiators', e.target.value)} multiline rows={2} />
       </IntakeSection>
 
-      <IntakeSection T={T} title="Ideal Customer Profile (ICP)" icon="\ud83c\udfaf">
+      <IntakeSection T={T} title="Ideal Customer Profile (ICP)" icon="🎯">
         <IntakeField T={T} label="ICP Description" value={intake.icp.description} onChange={e => update('icp', 'description', e.target.value)} multiline rows={3} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <IntakeField T={T} label="Company Size Min" value={intake.icp.company_size?.min} onChange={e => updateNested('icp', 'company_size', 'min', e.target.value)} hint="employees" />
@@ -1021,19 +1040,19 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
         <IntakeField T={T} label="Excluded Segments" value={intake.icp.excluded_segments} onChange={e => update('icp', 'excluded_segments', e.target.value)} />
       </IntakeSection>
 
-      <IntakeSection T={T} title="Value Propositions" icon="\u2b50">
+      <IntakeSection T={T} title="Value Propositions" icon="⭐">
         <IntakeField T={T} label="Primary Value Prop" value={intake.value_props.primary} onChange={e => update('value_props', 'primary', e.target.value)} multiline rows={2} />
         <IntakeField T={T} label="Secondary Value Prop" value={intake.value_props.secondary} onChange={e => update('value_props', 'secondary', e.target.value)} multiline rows={2} />
         <IntakeField T={T} label="Proof Points" value={intake.value_props.proof_points} onChange={e => update('value_props', 'proof_points', e.target.value)} multiline rows={3} hint="Stats, case studies, metrics" />
       </IntakeSection>
 
-      <IntakeSection T={T} title="Pain Points" icon="\ud83d\udd25">
+      <IntakeSection T={T} title="Pain Points" icon="🔥">
         <IntakeField T={T} label="Primary Pain Point" value={intake.pain_points.primary} onChange={e => update('pain_points', 'primary', e.target.value)} multiline rows={2} />
         <IntakeField T={T} label="Secondary Pain Point" value={intake.pain_points.secondary} onChange={e => update('pain_points', 'secondary', e.target.value)} multiline rows={2} />
         <IntakeField T={T} label="Status Quo Cost" value={intake.pain_points.status_quo_cost} onChange={e => update('pain_points', 'status_quo_cost', e.target.value)} multiline rows={2} hint="What does NOT solving this cost them?" />
       </IntakeSection>
 
-      <IntakeSection T={T} title="Constraints" icon="\ud83d\udea7">
+      <IntakeSection T={T} title="Constraints" icon="🚧">
         <IntakeField T={T} label="Excluded Titles" value={intake.constraints.excluded_titles} onChange={e => update('constraints', 'excluded_titles', e.target.value)} hint="Titles NOT to contact" />
         <IntakeField T={T} label="Tone Preference" value={intake.constraints.tone_preference} onChange={e => update('constraints', 'tone_preference', e.target.value)} hint="e.g. Professional, casual" />
         <IntakeField T={T} label="Compliance Notes" value={intake.constraints.compliance_notes} onChange={e => update('constraints', 'compliance_notes', e.target.value)} multiline rows={2} />
@@ -1047,6 +1066,7 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
   );
 }
 
+// ─── Strategy Generation Panel ────────────────────────────────────────────────
 function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
@@ -1056,16 +1076,18 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
 
   const runStrategyLive = async () => {
     setRunning(true); setProgress(0); setError('');
-    setStatus('Loading intake data\u2026');
+    setStatus('Loading intake data…');
     setProgress(5);
 
+    // Build intake block
     const currentIntake = intake || INTAKE_DEFAULTS;
     const companyName = currentIntake.company.name || 'Unknown Company';
     const intakeBlock = buildIntakeBlock(currentIntake);
 
-    setProgress(10); setStatus('Generating research & targeting (Part A)\u2026');
+    setProgress(10); setStatus('Generating research & targeting (Part A)…');
 
     try {
+      // Sequential calls to avoid CGI timeout — Part A first
       let resA, resB;
       try {
         const rawA = await fetch(AI_API, {
@@ -1078,7 +1100,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
         resA = { ok: false, error: 'Part A network error: ' + e.message };
       }
 
-      setProgress(45); setStatus('Part A received. Generating execution & messaging (Part B)\u2026');
+      setProgress(45); setStatus('Part A received. Generating execution & messaging (Part B)…');
 
       try {
         const rawB = await fetch(AI_API, {
@@ -1091,14 +1113,18 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
         resB = { ok: false, error: 'Part B network error: ' + e.message };
       }
 
-      setProgress(70); setStatus('Both responses received, parsing\u2026');
+      setProgress(70); setStatus('Both responses received, parsing…');
 
       let parsedA = {}, parsedB = {};
       if (resA.ok && resA.text) {
         try { parsedA = robustJsonParse(resA.text); } catch (e) { console.warn('Part A parse error:', e); }
+      } else {
+        console.warn('Part A failed:', resA.error);
       }
       if (resB.ok && resB.text) {
         try { parsedB = robustJsonParse(resB.text); } catch (e) { console.warn('Part B parse error:', e); }
+      } else {
+        console.warn('Part B failed:', resB.error);
       }
 
       if (!resA.ok && !resB.ok) {
@@ -1108,10 +1134,10 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
         return;
       }
 
-      setProgress(85); setStatus('Merging strategy halves\u2026');
+      setProgress(85); setStatus('Merging strategy halves…');
       const fullStrategy = { ...parsedA, ...parsedB };
 
-      setProgress(92); setStatus('Saving strategy\u2026');
+      setProgress(92); setStatus('Saving strategy…');
       await apiFetch('/strategy', {
         method: 'POST',
         body: JSON.stringify({ workspace_id: workspaceId, data: fullStrategy }),
@@ -1128,10 +1154,10 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
   };
 
   const runStrategyDemo = async () => {
-    setRunning(true); setProgress(0); setStatus('Loading demo strategy\u2026');
+    setRunning(true); setProgress(0); setStatus('Loading demo strategy…');
     const steps = [
-      [400, 25, 'Simulating Part A\u2026'], [400, 50, 'Simulating Part B\u2026'],
-      [300, 75, 'Merging\u2026'], [200, 100, 'Demo strategy loaded!'],
+      [400, 25, 'Simulating Part A…'], [400, 50, 'Simulating Part B…'],
+      [300, 75, 'Merging…'], [200, 100, 'Demo strategy loaded!'],
     ];
     for (const [delay, pct, msg] of steps) {
       await new Promise(r => setTimeout(r, delay));
@@ -1174,7 +1200,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
       {error && <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: T.redBg, color: T.red, fontSize: 12 }}>{error}</div>}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <Btn T={T} onClick={runStrategyLive} disabled={running}>
-          {running ? `Running\u2026 ${progress}%` : '\u25b6 Run Strategy (AI)'}
+          {running ? `Running… ${progress}%` : '▶ Run Strategy (AI)'}
         </Btn>
         <Btn T={T} onClick={runStrategyDemo} disabled={running} secondary>
           Demo Data
@@ -1184,18 +1210,19 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
   );
 }
 
+// ─── Strategy Display — 11 Tabs ───────────────────────────────────────────────
 const STRATEGY_TABS = [
-  { id: 'icp', label: 'ICP Validation', icon: '\ud83c\udfaf' },
-  { id: 'dm', label: 'Decision-Maker', icon: '\ud83d\udc64' },
-  { id: 'channel', label: 'Channel Strategy', icon: '\ud83d\udce1' },
-  { id: 'messaging', label: 'Messaging Angles', icon: '\ud83d\udcac' },
-  { id: 'valueprop', label: 'Value Prop', icon: '\u2b50' },
-  { id: 'meeting', label: 'Meeting Strategy', icon: '\ud83d\udcc5' },
-  { id: 'salesnav', label: 'Sales Nav', icon: '\ud83d\udd0e' },
-  { id: 'risk', label: 'Risk & Optimization', icon: '\u26a0\ufe0f' },
-  { id: 'flow', label: 'Conversation Flow', icon: '\u2709\ufe0f' },
-  { id: 'followup', label: 'Follow-ups', icon: '\ud83d\udd01' },
-  { id: 'exec', label: 'Execution Notes', icon: '\ud83d\udccb' },
+  { id: 'icp', label: 'ICP Validation', icon: '🎯' },
+  { id: 'dm', label: 'Decision-Maker', icon: '👤' },
+  { id: 'channel', label: 'Channel Strategy', icon: '📡' },
+  { id: 'messaging', label: 'Messaging Angles', icon: '💬' },
+  { id: 'valueprop', label: 'Value Prop', icon: '⭐' },
+  { id: 'meeting', label: 'Meeting Strategy', icon: '📅' },
+  { id: 'salesnav', label: 'Sales Nav', icon: '🔎' },
+  { id: 'risk', label: 'Risk & Optimization', icon: '⚠️' },
+  { id: 'flow', label: 'Conversation Flow', icon: '✉️' },
+  { id: 'followup', label: 'Follow-ups', icon: '🔁' },
+  { id: 'exec', label: 'Execution Notes', icon: '📋' },
 ];
 
 function StrategyTabs({ T, activeTab, onSelect }) {
@@ -1250,6 +1277,7 @@ function BulletList({ T, items }) {
   );
 }
 
+// Tab: ICP Validation
 function ICPTab({ T, strategy, editMode, onChange }) {
   const r = strategy.icp_refinement || {};
   return (
@@ -1285,7 +1313,7 @@ function ICPTab({ T, strategy, editMode, onChange }) {
         <SectionCard T={T} title="Red Flags">
           {(r.red_flags || []).map((f, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <span style={{ color: T.red, flexShrink: 0 }}>\u2691</span>
+              <span style={{ color: T.red, flexShrink: 0 }}>⚑</span>
               <span style={{ fontSize: 13, color: T.text }}>{f}</span>
             </div>
           ))}
@@ -1295,6 +1323,7 @@ function ICPTab({ T, strategy, editMode, onChange }) {
   );
 }
 
+// Tab: Decision-Maker Targeting
 const SENIORITY_POLICIES = {
   VP_PLUS_DEFAULT: 'VP+ Only (Default)',
   VP_PLUS_ALLOW_DIRECTOR_HEAD_SMALL_CO: 'VP+ with Director/Head (Small Co)',
@@ -1359,6 +1388,7 @@ function DMTab({ T, strategy, editMode, onChange }) {
   );
 }
 
+// Tab: Channel Strategy
 function ChannelTab({ T, strategy }) {
   const cs = strategy.channel_strategy || {};
   const pacing = cs.pacing || {};
@@ -1404,6 +1434,7 @@ function ChannelTab({ T, strategy }) {
   );
 }
 
+// Tab: Messaging Angles
 function MessagingTab({ T, strategy }) {
   const ma = strategy.messaging_angles || {};
   const lw = ma.lead_with || {};
@@ -1433,7 +1464,7 @@ function MessagingTab({ T, strategy }) {
       <SectionCard T={T} title="Never Say">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {(ma.never_say || []).map((s, i) => (
-            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>\u2717 {s}</span>
+            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>✗ {s}</span>
           ))}
         </div>
       </SectionCard>
@@ -1441,6 +1472,7 @@ function MessagingTab({ T, strategy }) {
   );
 }
 
+// Tab: Value Prop
 function ValuePropTab({ T, strategy }) {
   const vp = strategy.value_prop_framing || {};
   const oe = vp.outcome_emphasis || {};
@@ -1448,7 +1480,7 @@ function ValuePropTab({ T, strategy }) {
   return (
     <div>
       <SectionCard T={T} title="First Touch Simplification">
-        <div style={{ fontSize: 14, lineHeight: 1.7, color: T.text, fontStyle: 'italic' }}>\u201c{vp.first_touch_simplification}\u201d</div>
+        <div style={{ fontSize: 14, lineHeight: 1.7, color: T.text, fontStyle: 'italic' }}>"{ vp.first_touch_simplification}"</div>
       </SectionCard>
       <SectionCard T={T} title="Outcome Emphasis">
         <DataRow T={T} label="Primary">{oe.primary}</DataRow>
@@ -1467,6 +1499,7 @@ function ValuePropTab({ T, strategy }) {
   );
 }
 
+// Tab: Meeting Strategy
 function MeetingTab({ T, strategy }) {
   const mb = strategy.meeting_booking || {};
   const cta = mb.cta_style || {};
@@ -1481,7 +1514,7 @@ function MeetingTab({ T, strategy }) {
           <div style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Examples</div>
           {(cta.examples || []).map((ex, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '10px 14px', background: T.bgInput, borderRadius: 8, marginBottom: 8, gap: 12 }}>
-              <span style={{ fontSize: 13, color: T.text, fontStyle: 'italic', flex: 1 }}>\u201c{ex}\u201d</span>
+              <span style={{ fontSize: 13, color: T.text, fontStyle: 'italic', flex: 1 }}>"“{ex}”"</span>
               <CopyBtn T={T} text={ex} />
             </div>
           ))}
@@ -1502,6 +1535,7 @@ function MeetingTab({ T, strategy }) {
   );
 }
 
+// Tab: Sales Nav
 function SalesNavTab({ T, strategy }) {
   const sn = strategy.sales_nav || {};
   const rf = sn.recommended_filters || {};
@@ -1522,7 +1556,7 @@ function SalesNavTab({ T, strategy }) {
     <div>
       <SectionCard T={T} title="Recommended Filters">
         <DataRow T={T} label="Geography">{(rf.geography || []).join(', ')}</DataRow>
-        <DataRow T={T} label="Company Size">{rf.company_size ? `${rf.company_size.min}\u2013${rf.company_size.max} employees` : '\u2014'}</DataRow>
+        <DataRow T={T} label="Company Size">{rf.company_size ? `${rf.company_size.min}–${rf.company_size.max} employees` : '—'}</DataRow>
         <DataRow T={T} label="Industries">{(rf.industries || []).join(', ')}</DataRow>
         <DataRow T={T} label="Seniority">{(rf.seniority || []).join(', ')}</DataRow>
         <DataRow T={T} label="Exclude Industries">{(rf.exclude_industries || []).join(', ')}</DataRow>
@@ -1551,18 +1585,19 @@ function SalesNavTab({ T, strategy }) {
       <SectionCard T={T} title="Profile Red Flags">
         {(sn.profile_red_flags || []).map((f, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <span style={{ color: T.red, flexShrink: 0 }}>\u2691</span>
+            <span style={{ color: T.red, flexShrink: 0 }}>⚑</span>
             <span style={{ fontSize: 13, color: T.text }}>{f}</span>
           </div>
         ))}
       </SectionCard>
       <div style={{ marginTop: 8 }}>
-        <Btn T={T} variant="outline" small onClick={exportCSV}>\u2b07 Export Title Clusters CSV</Btn>
+        <Btn T={T} variant="outline" small onClick={exportCSV}>⬇ Export Title Clusters CSV</Btn>
       </div>
     </div>
   );
 }
 
+// Tab: Risk & Optimization
 function RiskTab({ T, strategy }) {
   const cr = strategy.campaign_risks || {};
   return (
@@ -1570,7 +1605,7 @@ function RiskTab({ T, strategy }) {
       <SectionCard T={T} title="Likely Objections">
         {(cr.likely_objections || []).map((o, i) => (
           <div key={i} style={{ marginBottom: 14, padding: '12px 14px', background: T.bgInput, borderRadius: 8 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>\u275d {o.objection}</div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>❝ {o.objection}</div>
             <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}><strong style={{ color: T.accent }}>Response angle:</strong> {o.response_angle}</div>
           </div>
         ))}
@@ -1579,7 +1614,7 @@ function RiskTab({ T, strategy }) {
         <SectionCard T={T} title="Success Signals">
           {(cr.success_signals || []).map((s, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <span style={{ color: T.green }}>\u2713</span>
+              <span style={{ color: T.green }}>✓</span>
               <span style={{ fontSize: 13, color: T.text }}>{s}</span>
             </div>
           ))}
@@ -1587,19 +1622,20 @@ function RiskTab({ T, strategy }) {
         <SectionCard T={T} title="Failure Signals">
           {(cr.failure_signals || []).map((s, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <span style={{ color: T.red }}>\u2717</span>
+              <span style={{ color: T.red }}>✗</span>
               <span style={{ fontSize: 13, color: T.text }}>{s}</span>
             </div>
           ))}
         </SectionCard>
       </div>
-      <SectionCard T={T} title="Week 1\u20132 Adjustments">
+      <SectionCard T={T} title="Week 1–2 Adjustments">
         <BulletList T={T} items={cr.week_1_2_adjustments} />
       </SectionCard>
     </div>
   );
 }
 
+// Tab: Conversation Flow
 function FlowTab({ T, strategy }) {
   const cf = strategy.conversation_flow || {};
   const msgs = [cf.message_1, cf.message_2, cf.message_3].filter(Boolean);
@@ -1607,7 +1643,7 @@ function FlowTab({ T, strategy }) {
     <div>
       <SectionCard T={T} title="Connect Note">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, fontSize: 13, color: T.text, lineHeight: 1.7, fontStyle: 'italic' }}>\u201c{cf.connect_note}\u201d</div>
+          <div style={{ flex: 1, fontSize: 13, color: T.text, lineHeight: 1.7, fontStyle: 'italic' }}>"{ cf.connect_note}"</div>
           <CopyBtn T={T} text={cf.connect_note || ''} />
         </div>
       </SectionCard>
@@ -1644,7 +1680,7 @@ function FlowTab({ T, strategy }) {
       <SectionCard T={T} title="Strict Avoid List">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {(cf.strict_avoid || []).map((s, i) => (
-            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>\u2717 {s}</span>
+            <span key={i} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, background: T.redBg, color: T.red, fontWeight: 500 }}>✗ {s}</span>
           ))}
         </div>
       </SectionCard>
@@ -1652,6 +1688,7 @@ function FlowTab({ T, strategy }) {
   );
 }
 
+// Tab: Follow-ups
 function FollowupTab({ T, strategy }) {
   const fu = strategy.follow_up || {};
   return (
@@ -1677,6 +1714,7 @@ function FollowupTab({ T, strategy }) {
   );
 }
 
+// Tab: Execution Notes
 function ExecTab({ T, strategy }) {
   const en = strategy.ridge_execution_notes || {};
   return (
@@ -1693,7 +1731,7 @@ function ExecTab({ T, strategy }) {
       <SectionCard T={T} title="Risks">
         {(en.risks || []).map((r, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <span style={{ color: T.orange }}>\u26a0</span>
+            <span style={{ color: T.orange }}>⚠</span>
             <span style={{ fontSize: 13, color: T.text }}>{r}</span>
           </div>
         ))}
@@ -1747,6 +1785,7 @@ function StrategyView({ T, strategy, workspaceId }) {
 
   return (
     <div>
+      {/* Strategy Summary Banner */}
       <Card T={T} style={{ padding: 20, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
           <div style={{ flex: 1, minWidth: 200 }}>
@@ -1756,10 +1795,10 @@ function StrategyView({ T, strategy, workspaceId }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: T.textMuted, minWidth: 60 }}>
-              {saveState === 'saving' ? '\u23f3 Saving\u2026' : saveState === 'unsaved' ? '\u25cf Unsaved' : '\u2713 Saved'}
+              {saveState === 'saving' ? '⏳ Saving…' : saveState === 'unsaved' ? '● Unsaved' : '✓ Saved'}
             </span>
             <Btn T={T} variant={editMode ? 'primary' : 'outline'} small onClick={() => setEditMode(!editMode)}>
-              {editMode ? '\u2713 Done Editing' : '\u270f Edit Mode'}
+              {editMode ? '✓ Done Editing' : '✏ Edit Mode'}
             </Btn>
           </div>
         </div>
@@ -1770,6 +1809,7 @@ function StrategyView({ T, strategy, workspaceId }) {
   );
 }
 
+// ─── Workspace Detail ─────────────────────────────────────────────────────────
 function WorkspaceDetail({ T, workspace, onBack, onDeleted, user }) {
   const [ws, setWs] = useState(workspace);
   const [activeTab, setActiveTab] = useState('intake');
@@ -1801,10 +1841,11 @@ function WorkspaceDetail({ T, workspace, onBack, onDeleted, user }) {
 
   return (
     <div style={{ padding: '20px 24px', maxWidth: 1100, margin: '0 auto' }}>
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.textMuted, fontSize: 13, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
-            \u2190 Back
+            ← Back
           </button>
           <div style={{ fontSize: 20, fontWeight: 800, color: T.text, letterSpacing: '-0.4px' }}>{ws.name}</div>
           <Badge T={T} color={statusColor(ws.status, T)}>{statusLabel(ws.status)}</Badge>
@@ -1829,14 +1870,16 @@ function WorkspaceDetail({ T, workspace, onBack, onDeleted, user }) {
         </div>
       </div>
 
+      {/* Workspace Meta */}
       {(ws.website || ws.client_email || ws.notes) && (
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16, fontSize: 13, color: T.textMuted }}>
-          {ws.website && <span>\ud83c\udf10 <a href={ws.website} target="_blank" rel="noopener" style={{ color: T.accent, textDecoration: 'none' }}>{ws.website}</a></span>}
-          {ws.client_email && <span>\u2709 {ws.client_email}</span>}
-          {ws.created_at && <span>\ud83d\udcc5 Created {ws.created_at.slice(0,10)}</span>}
+          {ws.website && <span>🌐 <a href={ws.website} target="_blank" rel="noopener" style={{ color: T.accent, textDecoration: 'none' }}>{ws.website}</a></span>}
+          {ws.client_email && <span>✉ {ws.client_email}</span>}
+          {ws.created_at && <span>📅 Created {ws.created_at.slice(0,10)}</span>}
         </div>
       )}
 
+      {/* Tab Bar */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
         {[{ id: 'intake', label: 'Intake Form' }, { id: 'strategy', label: 'Strategy Output' }].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
@@ -1873,6 +1916,7 @@ function WorkspaceDetail({ T, workspace, onBack, onDeleted, user }) {
   );
 }
 
+// ─── Manage Accounts Modal ────────────────────────────────────────────────────
 function ManageAccountsModal({ T, onClose, currentUser }) {
   const [users, setUsers] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
@@ -1924,9 +1968,10 @@ function ManageAccountsModal({ T, onClose, currentUser }) {
     <ModalOverlay T={T} onClose={onClose}>
       <div style={{ fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 20 }}>Manage Accounts</div>
       {loading ? (
-        <div style={{ color: T.textMuted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading\u2026</div>
+        <div style={{ color: T.textMuted, fontSize: 13, padding: 20, textAlign: 'center' }}>Loading…</div>
       ) : (
         <>
+          {/* Create User */}
           <div style={{ marginBottom: 24, padding: 16, background: T.bg, borderRadius: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 12 }}>Create New Account</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -1945,24 +1990,25 @@ function ManageAccountsModal({ T, onClose, currentUser }) {
             </div>
             {createError && <div style={{ fontSize: 12, color: T.red, marginBottom: 8 }}>{createError}</div>}
             <Btn T={T} small onClick={createUser} disabled={creating || !newEmail || !newPassword}>
-              {creating ? 'Creating\u2026' : '+ Create Account'}
+              {creating ? 'Creating…' : '+ Create Account'}
             </Btn>
           </div>
 
+          {/* Users Table */}
           <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 10 }}>All Accounts ({users.length})</div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {users.map(u => (
               <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${T.border}`, gap: 8, flexWrap: 'wrap' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{u.name || u.email}</div>
-                  <div style={{ fontSize: 12, color: T.textMuted }}>{u.email} \u00b7 <Badge T={T} color={u.role === 'ridge_admin' ? 'green' : 'orange'}>{u.role}</Badge></div>
+                  <div style={{ fontSize: 12, color: T.textMuted }}>{u.email} · <Badge T={T} color={u.role === 'ridge_admin' ? 'green' : 'orange'}>{u.role}</Badge></div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   {resetPwdUser?.id === u.id ? (
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Input T={T} value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="New password" type="password" style={{ width: 140 }} />
                       <Btn T={T} small onClick={resetPassword} disabled={!newPwd}>Save</Btn>
-                      <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(null)}>\u2715</Btn>
+                      <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(null)}>✕</Btn>
                     </div>
                   ) : (
                     <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(u)}>Reset Password</Btn>
@@ -1970,7 +2016,7 @@ function ManageAccountsModal({ T, onClose, currentUser }) {
                   {confirmDeleteUser === u.id ? (
                     <div style={{ display: 'flex', gap: 4 }}>
                       <Btn T={T} variant="danger" small onClick={() => deleteUser(u.id)}>Confirm</Btn>
-                      <Btn T={T} variant="outline" small onClick={() => setConfirmDeleteUser(null)}>\u2715</Btn>
+                      <Btn T={T} variant="outline" small onClick={() => setConfirmDeleteUser(null)}>✕</Btn>
                     </div>
                   ) : (
                     u.id !== currentUser?.id && (
@@ -1990,6 +2036,7 @@ function ManageAccountsModal({ T, onClose, currentUser }) {
   );
 }
 
+// ─── Client Portal ────────────────────────────────────────────────────────────
 function ClientPortal({ T, user, workspaceId }) {
   const [ws, setWs] = useState(null);
   const [strategy, setStrategy] = useState(null);
@@ -2007,12 +2054,13 @@ function ClientPortal({ T, user, workspaceId }) {
     });
   }, [workspaceId]);
 
-  if (!ws) return <div style={{ padding: 40, textAlign: 'center', color: T.textMuted }}>Loading workspace\u2026</div>;
+  if (!ws) return <div style={{ padding: 40, textAlign: 'center', color: T.textMuted }}>Loading workspace…</div>;
 
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 24px' }}>
+      {/* View Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
-        {[{ id: 'overview', label: '\ud83d\udcca Overview' }, { id: 'intake', label: '\ud83d\udccb Intake' }, { id: 'strategy', label: '\ud83c\udfaf Strategy' }].map(v => (
+        {[{ id: 'overview', label: '📊 Overview' }, { id: 'intake', label: '📋 Intake' }, { id: 'strategy', label: '🎯 Strategy' }].map(v => (
           <button key={v.id} onClick={() => setActiveView(v.id)} style={{
             padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: activeView === v.id ? T.accent : T.bgCard,
@@ -2063,7 +2111,7 @@ function ClientPortal({ T, user, workspaceId }) {
             <StrategyView T={T} strategy={strategy} workspaceId={ws.id} />
           ) : (
             <div style={{ textAlign: 'center', padding: 80, color: T.textMuted }}>
-              <div style={{ fontSize: 40, marginBottom: 16 }}>\u23f3</div>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>⏳</div>
               <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 8 }}>Strategy not yet generated</div>
               <div style={{ fontSize: 13 }}>Your Ridge team will generate your strategy once the intake form is complete.</div>
             </div>
@@ -2074,6 +2122,7 @@ function ClientPortal({ T, user, workspaceId }) {
   );
 }
 
+// ─── Admin Dashboard ──────────────────────────────────────────────────────────
 function AdminDashboard({ T, user, onLogout, mode, toggle }) {
   const [view, setView] = useState('workspaces');
   const [selectedWs, setSelectedWs] = useState(null);
@@ -2103,6 +2152,7 @@ function AdminDashboard({ T, user, onLogout, mode, toggle }) {
   );
 }
 
+// ─── Client Dashboard ─────────────────────────────────────────────────────────
 function ClientDashboard({ T, user, onLogout, mode, toggle }) {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: T.bg, overflow: 'hidden' }}>
@@ -2125,22 +2175,26 @@ function ClientDashboard({ T, user, onLogout, mode, toggle }) {
   );
 }
 
+// ─── App Root ─────────────────────────────────────────────────────────────────
 function App() {
   const { T, mode, toggle, setMode } = useTheme();
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
 
+  // Session check on load
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('token');
     if (tokenFromUrl) SESSION_TOKEN = tokenFromUrl;
 
+    // Try session check — short timeout so we don't hang on loading screen
     const timeout = setTimeout(() => setAuthChecked(true), 4000);
     apiFetch('/auth/session').then(data => {
       clearTimeout(timeout);
       if (data?.user) {
         setUser(data.user);
       }
+      // Load theme from server
       apiFetch('/settings?key=theme').then(d => {
         if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
       });
@@ -2151,6 +2205,7 @@ function App() {
   const handleLogin = (userData, token) => {
     SESSION_TOKEN = token;
     setUser(userData);
+    // Load theme
     apiFetch('/settings?key=theme').then(d => {
       if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
     });
@@ -2170,7 +2225,7 @@ function App() {
         <div style={{ textAlign: 'center' }}>
           <RidgeLogo T={T} size={44} />
           <div style={{ fontSize: 14, fontWeight: 600, color: T.textMuted, marginTop: 12, letterSpacing: '0.02em' }}>Strategy Engine</div>
-          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>Loading\u2026</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>Loading…</div>
           <div style={{ marginTop: 24, width: 48, height: 4, borderRadius: 2, background: T.accent, opacity: 0.3, margin: '24px auto 0' }} />
         </div>
       </div>
