@@ -1,0 +1,3863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ridge Strategy Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased;font-size:13px;background:#1B2028}
+#root{height:100%}
+input,textarea,select,button{font-family:inherit}
+button{cursor:pointer;border:none;background:none}
+textarea{resize:vertical}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.14)}
+.mono{font-family:'JetBrains Mono','SF Mono','Fira Code',monospace}
+.tabular{font-variant-numeric:tabular-nums lining-nums}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes slideInRight{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes fadeScaleIn{from{opacity:0;transform:scale(0.97)}to{opacity:1;transform:scale(1)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes orbitalSpin1{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes orbitalSpin2{0%{transform:rotate(120deg)}100%{transform:rotate(480deg)}}
+@keyframes orbitalSpin3{0%{transform:rotate(240deg)}100%{transform:rotate(600deg)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulseRing{0%{opacity:0.6;transform:scale(0.95)}50%{opacity:1;transform:scale(1)}100%{opacity:0.6;transform:scale(0.95)}}
+@keyframes borderGlow{0%,100%{border-color:rgba(28,60,52,0.4)}50%{border-color:rgba(91,158,138,0.55)}}
+@keyframes dataShimmer{0%,100%{opacity:0.85}50%{opacity:1}}
+.skeleton{background:linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.04) 75%);background-size:200% 100%;animation:shimmer 1.5s ease infinite}
+.fade-slide-in{animation:fadeSlideIn 200ms ease both}
+.data-shimmer{animation:dataShimmer 4s ease infinite}
+.sidebar-active-border{animation:borderGlow 3s ease infinite}
+input:focus,.input-focused{animation:borderGlow 3s ease infinite}
+@media(max-width:768px){
+  .two-col-grid{grid-template-columns:1fr!important}
+  .ws-grid{grid-template-columns:1fr!important}
+  .hide-mobile{display:none!important}
+  .strategy-layout{flex-direction:column!important}
+  .strategy-tabs-vert{width:100%!important;flex-direction:row!important;overflow-x:auto!important;border-right:none!important;border-bottom:1px solid rgba(255,255,255,0.06)!important;flex-shrink:0!important}
+  .strategy-tab-btn{flex-shrink:0!important;white-space:nowrap!important}
+}
+</style>
+<!-- React + ReactDOM UMD (production) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel standalone for JSX -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { createRoot } = ReactDOM;
+
+// ─── API Base ───────────────────────────────────────────────────────────────
+const API = `/api`;
+const AI_API = `/api/ai`;
+
+// ─── In-memory session token (storage is blocked in sandboxed iframes) ─────────
+let SESSION_TOKEN = null;
+
+async function apiFetch(path, options = {}) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = SESSION_TOKEN
+    ? `${API}${path}${sep}token=${SESSION_TOKEN}`
+    : `${API}${path}`;
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return {}; }
+}
+
+// ─── Design Tokens ───────────────────────────────────────────────────────────
+const DARK = {
+  bg: '#1B2028',
+  bgCard: '#232A33',
+  bgElevated: '#2A323C',
+  bgFloat: '#333C47',
+  bgInput: '#1E252D',
+  bgSidebar: '#161B22',
+  border: 'rgba(255,255,255,0.06)',
+  borderHover: 'rgba(255,255,255,0.12)',
+  borderActive: 'rgba(28,60,52,0.5)',
+  text: '#E8EAED',
+  textSecondary: '#9AA0A8',
+  textMuted: '#5C6370',
+  textFaint: '#3D4550',
+  accent: '#1C3C34',
+  accentHover: '#2A5548',
+  accentSurface: 'rgba(28,60,52,0.12)',
+  accentBorder: 'rgba(28,60,52,0.4)',
+  accentText: '#5B9E8A',
+  accentLight: 'rgba(28,60,52,0.10)',
+  accentMedium: 'rgba(28,60,52,0.20)',
+  btnPrimaryBg: '#1C3C34',
+  btnPrimaryHover: '#2A5548',
+  btnPrimaryText: '#FFFFFF',
+  success: '#27AE60',
+  successBg: 'rgba(39,174,96,0.1)',
+  warning: '#E2A040',
+  warningBg: 'rgba(226,160,64,0.1)',
+  danger: '#E25555',
+  dangerBg: 'rgba(226,85,85,0.1)',
+  info: '#5B8DEF',
+  infoBg: 'rgba(91,141,239,0.1)',
+  shadow: '0 1px 2px rgba(0,0,0,0.3)',
+  shadowHover: '0 2px 8px rgba(0,0,0,0.4)',
+  shadowElevated: '0 4px 16px rgba(0,0,0,0.5)',
+  topBar: '#1B2028',
+  green: '#27AE60', orange: '#E2A040', red: '#E25555',
+  greenBg: 'rgba(39,174,96,0.1)', orangeBg: 'rgba(226,160,64,0.1)', redBg: 'rgba(226,85,85,0.1)',
+  surface2: '#2A323C',
+};
+
+const LIGHT = {
+  bg: '#F5F6F8',
+  bgCard: '#FFFFFF',
+  bgElevated: '#FFFFFF',
+  bgFloat: '#FFFFFF',
+  bgInput: '#F0F1F4',
+  bgSidebar: '#161B22',
+  border: 'rgba(0,0,0,0.08)',
+  borderHover: 'rgba(0,0,0,0.15)',
+  borderActive: 'rgba(28,60,52,0.3)',
+  text: '#1A1D21',
+  textSecondary: '#5A6069',
+  textMuted: '#8B919A',
+  textFaint: '#C0C5CC',
+  accent: '#1C3C34',
+  accentHover: '#2A5548',
+  accentSurface: 'rgba(28,60,52,0.06)',
+  accentBorder: 'rgba(28,60,52,0.25)',
+  accentText: '#1C3C34',
+  accentLight: 'rgba(28,60,52,0.06)',
+  accentMedium: 'rgba(28,60,52,0.14)',
+  btnPrimaryBg: '#1C3C34',
+  btnPrimaryHover: '#2A5548',
+  btnPrimaryText: '#FFFFFF',
+  success: '#1D8B4E',
+  successBg: 'rgba(29,139,78,0.08)',
+  warning: '#C08520',
+  warningBg: 'rgba(192,133,32,0.08)',
+  danger: '#CC3D3D',
+  dangerBg: 'rgba(204,61,61,0.08)',
+  info: '#4B7BE5',
+  infoBg: 'rgba(75,123,229,0.08)',
+  shadow: '0 1px 3px rgba(0,0,0,0.08)',
+  shadowHover: '0 2px 8px rgba(0,0,0,0.1)',
+  shadowElevated: '0 4px 16px rgba(0,0,0,0.12)',
+  topBar: '#FFFFFF',
+  green: '#1D8B4E', orange: '#C08520', red: '#CC3D3D',
+  greenBg: 'rgba(29,139,78,0.08)', orangeBg: 'rgba(192,133,32,0.08)', redBg: 'rgba(204,61,61,0.08)',
+  surface2: '#F0F1F4',
+};
+
+// ─── Icon Component ───────────────────────────────────────────────────────────
+function Icon({ name, size = 16, color = 'currentColor', style = {}, className = '' }) {
+  const paths = {
+    grid: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    document: <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></>,
+    crosshair: <><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></>,
+    sliders: <><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></>,
+    search: <><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
+    copy: <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></>,
+    edit: <><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></>,
+    check: <><polyline points="20,6 9,17 4,12"/></>,
+    x: <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+    plus: <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+    download: <><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
+    play: <><polygon points="5,3 19,12 5,21"/></>,
+    target: <><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>,
+    user: <><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+    broadcast: <><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2a5 5 0 010-8.4"/><path d="M16.2 7.8a5 5 0 010 8.4"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/><circle cx="12" cy="12" r="1"/></>,
+    messageEdit: <><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></>,
+    diamond: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
+    calendar: <><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+    compass: <><circle cx="12" cy="12" r="10"/><polygon points="16.24,7.76 14.12,14.12 7.76,16.24 9.88,9.88"/></>,
+    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+    clock: <><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></>,
+    rocket: <><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/></>,
+    globe: <><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></>,
+    refresh: <><polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></>,
+    mail: <><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></>,
+    flag: <><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></>,
+    sun: <><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>,
+    moon: <><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></>,
+    logout: <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+    menu: <><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></>,
+    chevronDown: <><polyline points="6,9 12,15 18,9"/></>,
+    chevronRight: <><polyline points="9,18 15,12 9,6"/></>,
+    chevronLeft: <><polyline points="15,18 9,12 15,6"/></>,
+    arrowLeft: <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/></>,
+    barChart: <><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></>,
+    users: <><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></>,
+    alertTriangle: <><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+    building: <><path d="M6 22V4a2 2 0 012-2h8a2 2 0 012 2v18"/><path d="M6 12H4a2 2 0 00-2 2v6a2 2 0 002 2h2"/><path d="M18 9h2a2 2 0 012 2v9a2 2 0 01-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></>,
+    briefcase: <><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></>,
+    clipboard: <><rect x="9" y="2" width="6" height="4" rx="1" ry="1"/><path d="M17 4h2a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2h2"/></>,
+    'check-circle': <><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></>,
+    loader: <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>,
+    signal: <><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></>,
+    'message-circle': <><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></>,
+    'refresh-cw': <><path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16"/><path d="M8 16H3v5"/></>,
+    'bar-chart': <><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></>,
+    'log-out': <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></>,
+    'arrow-left': <><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></>,
+    settings: <><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></>,
+    quote: <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1zm12 0c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>,
+    star: <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
+    flame: <path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 11-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/>,
+    'more-vertical': <><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></>,
+    'chevron-down': <polyline points="6 9 12 15 18 9"/>,
+    'chevron-left': <polyline points="15 18 9 12 15 6"/>,
+    'alert-triangle': <><path d="m21.73 18-8-14a2 2 0 00-3.48 0l-8 14A2 2 0 004 21h16a2 2 0 001.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></>,
+    'check-circle2': <><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
+    radar: <><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 2a10 10 0 0 1 7.07 2.93"/><circle cx="12" cy="12" r="1"/></>,
+    zap: <><polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/></>,
+    trendingUp: <><polyline points="23,6 13.5,15.5 8.5,10.5 1,18"/><polyline points="17,6 23,6 23,12"/></>,
+    arrowUp: <><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5,12 12,5 19,12"/></>,
+    arrowDown: <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19,12 12,19 5,12"/></>,
+    activity: <><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></>,
+    send: <><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></>,
+    filter: <><polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46"/></>,
+    externalLink: <><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15,3 21,3 21,9"/><line x1="10" y1="14" x2="21" y2="3"/></>,
+    refreshCw: <><polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>,
+    chevronUp: <><polyline points="18,15 12,9 6,15"/></>,
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+         style={{ flexShrink: 0, display: 'inline-block', ...style }}>
+      {paths[name] || null}
+    </svg>
+  );
+}
+
+// ─── Demo Strategy Data ───────────────────────────────────────────────────────
+const DEMO_STRATEGY = {
+  client_name: "Acme Corp",
+  offer_summary: "B2B revenue intelligence platform that helps VP Sales teams at mid-market SaaS companies identify and close expansion revenue faster.",
+  icp_summary: "Mid-market SaaS companies (100-1000 employees) with complex sales motions, dedicated VP Sales or CRO, using Salesforce or HubSpot.",
+  icp_refinement: {
+    primary_segments: [
+      { segment: "Mid-Market SaaS (Series B-C)", description: "50-500 employee SaaS companies with a defined sales team, active outbound motion, and a VP Sales or CRO in place. Typically using Salesforce + Outreach/Salesloft stack.", fit_score: 92 },
+      { segment: "Growth-Stage FinTech", description: "FinTech companies scaling their enterprise sales motion. High deal complexity, multiple stakeholders, and a clear need for pipeline visibility and forecasting accuracy.", fit_score: 81 },
+    ],
+    secondary_segments: [
+      { segment: "PLG Companies Adding Sales-Assist", description: "Product-led growth companies introducing a sales layer to convert free users to paid enterprise contracts. Urgent need for signal-based targeting.", fit_score: 68 },
+    ],
+    narrowing_recommendations: [
+      "Focus on companies with Salesforce as CRM — highest adoption of rev intelligence tooling and fastest time to value",
+      "Prioritize companies that have recently hired a new VP Sales (last 90 days) — they're building processes and open to new tooling",
+      "Target Series B-C specifically: post-Series A companies often too early, Series D+ often have enterprise contracts with incumbents",
+    ],
+    red_flags: [
+      "Companies with fewer than 5 AEs — too small to justify the investment",
+      "Founder-led sales organizations — no dedicated sales leader to champion the tool",
+      "Companies using only inbound or PLG-only motions with no outbound SDR/AE structure",
+    ],
+  },
+  decision_maker_targeting: {
+    seniority_policy: "VP_PLUS_DEFAULT",
+    primary_titles: [
+      { title: "VP of Sales", rationale: "Primary budget holder and decision maker. Directly feels the pain of pipeline visibility and forecast accuracy. Most likely to champion the tool." },
+      { title: "Chief Revenue Officer (CRO)", rationale: "Final sign-off authority at companies with CRO. Focused on predictable revenue and board-level reporting. Strong ROI narrative resonates." },
+      { title: "VP Revenue Operations", rationale: "Technically evaluates the platform. Often initiates the evaluation and builds the internal business case. Key influencer." },
+    ],
+    secondary_titles: [
+      { title: "Director of Sales Operations", rationale: "Manages day-to-day implementation and integration. Champion at operational level, escalates to VP if ROI case is clear." },
+      { title: "Head of Sales Enablement", rationale: "Cares deeply about rep adoption and coaching use cases. Good secondary contact in larger orgs." },
+    ],
+    avoid_titles: ["SDR Manager", "Account Executive", "Sales Development Representative", "Sales Coordinator", "Marketing Operations"],
+    buying_committee: {
+      who_cares: "VP Sales / CRO — pipeline predictability, forecast accuracy, rep performance visibility",
+      who_signs: "CRO or CFO depending on contract size. VP Sales at sub-$50K ACV.",
+      who_influences: "VP Revenue Operations and Director of Sales Ops — will technically evaluate and integrate",
+      who_blocks: "IT/Security (SOC2 + CRM integration review), CFO if deal >$100K ACV",
+    },
+  },
+  channel_strategy: {
+    primary_channel: "LinkedIn Outbound (Connection + DM sequence)",
+    channel_breakdown: [
+      { channel: "LinkedIn", usage: "Primary", daily_volume: "30-40 connection requests", notes: "VP Sales + CRO targeting. Personalized connection note required. Do not send template without personalization." },
+      { channel: "Email", usage: "Secondary", daily_volume: "20-30 emails/day", notes: "Used for follow-up after LinkedIn connect. More detailed, can include case study link or benchmark data." },
+      { channel: "Cold Calling", usage: "Tertiary", daily_volume: "10-15 dials/day", notes: "Reserved for warm prospects who opened emails 3+ times or replied on LinkedIn. Never first touch." },
+    ],
+    pacing: {
+      ramp_week_1: "Start at 50% volume — 15-20 LinkedIn + 10 email. Test messages, gather reply data before scaling.",
+      steady_state: "Full volume by week 3: 35-40 LinkedIn + 25 email + 10 calls on warm prospects",
+      multi_sender: "Consider adding a second sender (SDR + AE co-sender) after week 4 if response rate >3%",
+    },
+    warm_vs_cold: "70% cold outbound (LinkedIn + email), 30% warm follow-up (opened email 2+ times, visited pricing page, LinkedIn engaged). Prioritize warm daily.",
+  },
+  messaging_angles: {
+    angles: [
+      { name: "The Forecast Accuracy Angle", description: "Most VP Sales are embarrassed by their forecast accuracy. Open with that pain — use an industry benchmark to make it concrete.", when_to_use: "First touch on VP Sales and CRO. Use when company has 10+ AEs (forecast complexity is real).", example_hook: "Most VP Sales I talk to tell me their forecast is off by 20-30% at least once per quarter. We built something to fix that.", strength: 91 },
+      { name: "The New VP Angle", description: "A new VP Sales in seat wants to build credibility fast. They need visibility they don't have yet. Position as the tool that gives them the intel to look smart.", when_to_use: "Use specifically when LinkedIn shows VP hired in last 90 days. Very high conversion on this segment.", example_hook: "Congrats on the new role at [Company]. Most new VPs I speak with say the first 90 days are a race to understand what's actually happening in the pipeline.", strength: 88 },
+      { name: "The RevOps Efficiency Angle", description: "RevOps leaders care about eliminating manual reporting and CRM hygiene. Lead with time savings and data accuracy.", when_to_use: "Use for VP RevOps and Director Sales Ops as primary audience. Do not use for CRO — too tactical.", example_hook: "If your RevOps team is still pulling pipeline reports manually every week, I'd love to show you what we built to automate that.", strength: 79 },
+    ],
+    lead_with: {
+      insight: "Industry benchmark data: VP Sales at SaaS companies close 23% less expansion revenue than they could due to blind spots in the existing customer base.",
+      curiosity: "Reference the company's recent growth or hiring signals without over-explaining. Let them ask how you found that.",
+      credibility: "Named customer proof: 'We work with the VP Sales teams at [Customer1] and [Customer2] — both doubled their expansion pipeline in Q1.'",
+    },
+    never_say: [
+      "Hope this finds you well",
+      "I wanted to reach out because...",
+      "Just checking in",
+      "Synergy",
+      "Game-changing platform",
+      "Revolutionary AI",
+      "Quick question",
+      "Touching base",
+    ],
+  },
+  value_prop_framing: {
+    first_touch_simplification: "One sentence: 'We help VP Sales teams at SaaS companies see which existing customers are most likely to expand — and close that revenue before it goes to a competitor.' No feature list. No jargon. ROI first.",
+    outcome_emphasis: {
+      primary: "Increase expansion revenue 20-40% by surfacing upsell signals in existing accounts before competitors do",
+      secondary: "Improve forecast accuracy to <10% variance — giving CROs credible, board-ready pipeline numbers",
+      tertiary: "Save RevOps 5-8 hours/week in manual reporting and CRM data reconciliation",
+    },
+    proof_point_strategy: {
+      hint_in_outreach: [
+        "Drop a benchmark number: 'Companies using us see 23% higher expansion rate in year 2'",
+        "Name-drop a mutual customer or competitor customer (if allowed): 'We work with the sales team at [Company]'",
+      ],
+      save_for_calls: [
+        "Full ROI calculator and payback period analysis",
+        "Detailed case study with before/after pipeline metrics",
+        "Competitive displacement story (if they currently use a competitor)",
+      ],
+    },
+  },
+  meeting_booking: {
+    cta_style: {
+      recommended: "Soft CTA — specific question, not 'book a meeting'",
+      description: "VP Sales get too many 'can I get 15 minutes' requests. Instead, ask a specific qualifying question that makes them think and creates a natural reason to reply.",
+      examples: [
+        "Curious — how are you currently tracking expansion signals in your existing accounts?",
+        "Worth a quick look? I can show you how we map upsell signals for a company like yours in about 10 minutes.",
+      ],
+    },
+    calendar_link_timing: "Never include a calendar link in the first message. Add it only in message 2 or 3, after they've shown interest (reply, opened 3+ times, clicked a link).",
+    friction_reduction: [
+      "Offer a specific time slot instead of a calendar link: 'I have Thursday at 2pm ET or Friday at 11am — either work?'",
+      "Keep the first meeting ask to 15-20 minutes — not 30. Shorter = less commitment = higher yes rate.",
+    ],
+    no_show_prevention: [
+      "Send a pre-meeting value-add: 'Before our call, here's a 2-min overview of what I'll be showing you' — increases show rate by ~25%",
+      "Text or LinkedIn message reminder 1 hour before (if they gave mobile or connected on LinkedIn)",
+    ],
+  },
+  sales_nav: {
+    recommended_filters: {
+      geography: ["United States", "Canada"],
+      company_size: { min: 100, max: 1000 },
+      industries: ["Software & Internet", "Computer Software", "Internet", "Financial Services", "FinTech"],
+      seniority: ["VP", "C-Level", "Director"],
+      exclude_industries: ["Staffing & Recruiting", "Education", "Non-profit", "Government"],
+    },
+    title_patterns: {
+      high_performers: [
+        "VP Sales", "VP of Sales", "Chief Revenue Officer", "CRO", "VP Revenue", "VP Revenue Operations", "Head of Sales",
+      ],
+      boolean_string: '("VP Sales" OR "VP of Sales" OR "Chief Revenue Officer" OR "CRO" OR "Head of Sales" OR "VP Revenue") NOT ("Director" OR "Manager" OR "SDR" OR "BDR")',
+    },
+    profile_red_flags: [
+      "Profile shows 'Advisor' or 'Consultant' title — likely not actively running a sales team",
+      "Last active on LinkedIn more than 90 days ago — likely won't respond to LinkedIn outreach",
+      "Open to work badge visible — company may be in cost-cutting mode, wrong time for new tooling",
+      "Company headcount dropped >10% in last 6 months — likely budget freeze",
+    ],
+  },
+  campaign_risks: {
+    likely_objections: [
+      { objection: "'We already use [Competitor/Gong/Clari]'", response_angle: "Acknowledge the tool, differentiate on expansion revenue use case specifically. Most incumbents focus on deal progression, not upsell signals in existing base. Offer a side-by-side." },
+      { objection: "'We don't have budget right now'", response_angle: "Reframe to ROI: 'If we can show you a 20% lift in expansion revenue, what does that translate to in ARR for your team?' Then offer a pilot or delayed start." },
+      { objection: "'Send me some information'", response_angle: "Never send a deck cold. Respond: 'Happy to — what specific challenge should I focus the info on so it's actually relevant to your situation?'" },
+    ],
+    success_signals: [
+      "Reply rate above 5% by end of week 2",
+      "3+ meetings booked in first 2 weeks",
+      "Prospects referencing the benchmark data or asking follow-up questions about methodology",
+    ],
+    failure_signals: [
+      "Reply rate below 2% after 200 outreaches — messaging angle needs to change",
+      "Meeting no-show rate above 30% — qualify harder before booking",
+      "Multiple replies saying 'wrong person' — ICP or title targeting needs adjustment",
+    ],
+    week_1_2_adjustments: [
+      "If reply rate <2%: A/B test the opening line — try the 'new VP angle' vs 'forecast accuracy angle'",
+      "If getting 'not interested' without explanation: shorten messages by 40%, lead with question not statement",
+      "If meetings aren't converting: review discovery call script and ensure problem qualification is happening",
+    ],
+  },
+  targeting: {
+    seniority_policy: "VP_PLUS_DEFAULT",
+    title_clusters: [
+      { cluster: "Revenue Leadership", titles: ["VP Sales", "CRO", "VP Revenue", "Chief Sales Officer"], notes: "Primary cluster — highest conversion, budget authority" },
+      { cluster: "Revenue Operations", titles: ["VP Revenue Operations", "Director Sales Operations", "Head of RevOps"], notes: "Secondary cluster — technical evaluators, champion potential" },
+    ],
+    filters: {
+      company_size_min: 100,
+      company_size_max: 1000,
+      industries_include: ["SaaS", "FinTech", "B2B Software"],
+      exclude: ["Staffing", "Non-profit", "Education", "Healthcare"],
+    },
+  },
+  conversation_flow: {
+    connect_note: "Noticed you're scaling the sales team at {Company} — we help VP Sales teams like yours surface expansion signals in existing accounts. Worth connecting.",
+    message_1: {
+      label: "First Touch — Benchmark Hook",
+      text: "Hey {FirstName},\n\nMost VP Sales I talk to tell me their forecast is wrong by 20-30% at least once per quarter — usually because expansion signals in existing accounts are invisible until it's too late.\n\nWe built something to fix that. Companies using it see a 23% lift in expansion revenue in year 2.\n\nCurious — how are you currently tracking upsell signals across your existing book of business?",
+      quality_score: 88,
+      quality_notes: "Strong open with industry benchmark. Soft CTA with qualifying question. No calendar link — correct. Could be tightened by 10%.",
+    },
+    message_2: {
+      label: "Follow-Up — Case Study Reference",
+      text: "Hey {FirstName},\n\nFollowing up in case this got buried.\n\nWe recently helped the VP Sales team at [SaaS Company] go from ~15% forecast variance to under 8% in one quarter — mainly by giving them visibility into which existing accounts were showing expansion signals before the QBR.\n\nWorth 15 minutes to see if we could do the same for {Company}? Thursday at 2pm ET or Friday at 11am work?",
+      quality_score: 84,
+      quality_notes: "Good social proof reference. Calendar offer placed correctly in message 2. Could make the outcome more specific to their industry.",
+    },
+    message_3: {
+      label: "Final Touch — Direct Ask",
+      text: "Hey {FirstName},\n\nLast one from me — if expansion revenue isn't a priority right now, totally understand.\n\nBut if you ever want to see what we've built for VP Sales teams in your space, I'm easy to reach.\n\n— [Name]",
+      quality_score: 79,
+      quality_notes: "Polite breakup message. Sets up future re-engagement. Consider adding a specific trigger: 'If anything changes on the forecast visibility front...'",
+    },
+    cta_rules: "Never use 'book a call', 'schedule a demo', or 'get 15 minutes' as the primary CTA. Use specific qualifying questions in message 1. Offer specific times (not calendar links) in message 2+.",
+    tone_rules: "Peer-to-peer. Never salesy, never pitchy. Write like a VP talking to another VP. Short paragraphs. No bullet points in LinkedIn messages.",
+    strict_avoid: [
+      "Hope this finds you well",
+      "I wanted to reach out",
+      "Just following up",
+      "Quick question",
+      "Circling back",
+      "Touching base",
+    ],
+  },
+  follow_up: {
+    cadence: "D1 → D4 → D9 → D16 → D25 (5 touches over 25 days, then 30-day re-engagement hold)",
+    philosophy: "Every follow-up must add new value — a new angle, a new piece of data, a new reference. Never send a follow-up that is just 'bumping this up'. If you don't have something new to say, wait.",
+    themes: [
+      { touch: 1, theme: "Benchmark Data", angle: "Lead with the industry benchmark to establish credibility and relevance" },
+      { touch: 2, theme: "Social Proof", angle: "Case study or customer reference — specific outcome, not generic testimonial" },
+      { touch: 3, theme: "Relevant Insight", angle: "Something specific to their company — a growth signal, a hire, a press mention — tied back to the problem" },
+      { touch: 4, theme: "Alternative Frame", angle: "Try a completely different angle (e.g., RevOps efficiency vs. revenue growth) in case the first angle didn't resonate" },
+      { touch: 5, theme: "Breakup", angle: "Polite, professional, leaves door open. Never passive-aggressive." },
+    ],
+  },
+  ridge_execution_notes: {
+    personalization: "Every message must have 1 personalization token beyond {FirstName} and {Company}. Minimum: reference a recent hire, a press mention, their product category, or their CRM stack. Use LinkedIn + Crunchbase for signals.",
+    message_philosophy: "Observation > Offer. Lead with something true about their world before ever mentioning what you do. The best messages make the reader feel understood, not sold to.",
+    quality_benchmark: "Internal benchmark: >80% quality score on all messages before sending. A message scoring below 70 should be rewritten, not sent. Quality score = clarity + relevance + CTA appropriateness.",
+    risks: [
+      "VP Sales inbox fatigue is real — differentiation in the first 5 words is critical",
+      "LinkedIn algorithm changes can reduce connection acceptance rates — monitor weekly and adjust note if <15% acceptance",
+    ],
+    next_steps: [
+      "Build initial Sales Nav list: target 500 prospects matching primary segment filters",
+      "Write and QA 3 LinkedIn message variants for split testing in week 1",
+      "Set up tracking in CRM: log all LinkedIn activity, open rates, reply rates by message variant",
+      "Schedule week 2 review: assess reply rates and adjust primary messaging angle if needed",
+      "Identify 3-5 mutual connections or warm intro paths before cold outreach begins",
+    ],
+  },
+};
+
+// ─── Robust JSON Parser ──────────────────────────────────────────────────────
+function robustJsonParse(raw) {
+  if (!raw || typeof raw !== 'string') throw new Error('Empty or non-string input');
+  let s = raw.trim();
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) s = s.slice(start, end + 1);
+  s = s.replace(/['']/g, "'").replace(/[""]/g, '"').replace(/\t/g, ' ');
+  try { return JSON.parse(s); } catch {}
+  s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+  try { return JSON.parse(s); } catch {}
+  let fixed = ''; let inString = false; let escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (escape) { fixed += c; escape = false; continue; }
+    if (c === '\\') { fixed += c; escape = true; continue; }
+    if (c === '"') inString = !inString;
+    if (inString && (c === '\n' || c === '\r')) { fixed += ' '; continue; }
+    fixed += c;
+  }
+  try { return JSON.parse(fixed); } catch {}
+  for (let i = fixed.length - 1; i >= 0; i--) {
+    if (fixed[i] === '}') {
+      try { return JSON.parse(fixed.slice(0, i + 1)); } catch {}
+    }
+  }
+  throw new Error('JSON parse failed after all repair stages. Raw: ' + s.slice(0, 100));
+}
+
+// ─── Toast System ────────────────────────────────────────────────────────────
+const toastListeners = [];
+function showToast(message, type = 'success') {
+  toastListeners.forEach(fn => fn({ message, type, id: Date.now() + Math.random() }));
+}
+
+function ToastContainer({ T }) {
+  const [toasts, setToasts] = useState([]);
+  useEffect(() => {
+    const handler = (t) => {
+      setToasts(prev => [...prev, t]);
+      setTimeout(() => setToasts(prev => prev.filter(x => x.id !== t.id)), 3800);
+    };
+    toastListeners.push(handler);
+    return () => { const idx = toastListeners.indexOf(handler); if (idx > -1) toastListeners.splice(idx, 1); };
+  }, []);
+
+  const borderColor = (type) => type === 'error' ? '#E25555' : type === 'warning' ? '#E2A040' : '#27AE60';
+
+  return (
+    <div style={{ position: 'fixed', bottom: 48, right: 24, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', borderRadius: 8,
+          background: '#232A33',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderLeft: `4px solid ${borderColor(t.type)}`,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+          animation: 'slideInRight 0.2s cubic-bezier(0.16,1,0.3,1)',
+          maxWidth: 340, minWidth: 220,
+          fontSize: 13, fontWeight: 500, color: '#E8EAED',
+        }}>
+          <Icon name={t.type === 'error' ? 'x' : t.type === 'warning' ? 'alertTriangle' : 'check'} size={14} color={borderColor(t.type)} />
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Skeleton ────────────────────────────────────────────────────────────────
+function Skeleton({ width = '100%', height = 16, style = {} }) {
+  return (
+    <div className="skeleton" style={{
+      width, height, borderRadius: 4, ...style,
+    }} />
+  );
+}
+
+// ─── Theme Hook ──────────────────────────────────────────────────────────────
+function useTheme() {
+  const [mode, setMode] = useState('dark');
+  const T = mode === 'dark' ? DARK : LIGHT;
+  const toggle = () => {
+    const next = mode === 'dark' ? 'light' : 'dark';
+    setMode(next);
+    apiFetch('/settings', { method: 'POST', body: JSON.stringify({ key: 'theme', value: next }) });
+  };
+  return { T, mode, toggle, setMode };
+}
+
+// ─── RadialGauge ─────────────────────────────────────────────────────────────
+function RadialGauge({ T, score, size = 36 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 50); return () => clearTimeout(t); }, []);
+  const radius = (size - 6) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - ((mounted ? score : 0) / 100) * circumference;
+  const color = score >= 80 ? T.success : score >= 60 ? T.warning : T.danger;
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={T.border} strokeWidth={3} />
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={3}
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
+      </svg>
+      <div style={{
+        position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: size <= 36 ? 9 : 11,
+        fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: T.text,
+        fontVariantNumeric: 'tabular-nums lining-nums',
+      }}>{score}</div>
+    </div>
+  );
+}
+
+// ─── ScoreBar (replaces RadialGauge) ──────────────────────────────────────────
+function ScoreBar({ T, score, size = 36 }) {
+  const color = score >= 80 ? T.success : score >= 60 ? T.warning : T.danger;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <div style={{ width: 80, height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          width: `${Math.max(0, Math.min(100, score))}%`, height: '100%',
+          background: color, borderRadius: 2,
+          transition: 'width 0.6s ease',
+        }} />
+      </div>
+      <span style={{
+        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        fontWeight: 500, color, minWidth: 24, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums lining-nums',
+      }}>{score}</span>
+    </div>
+  );
+}
+
+// ─── OrbitalLoader ───────────────────────────────────────────────────────────
+function ArcLoader({ T, progress, status }) {
+  const r = 54;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (progress / 100) * circ;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0' }}>
+      <div style={{ position: 'relative', width: 120, height: 120 }}>
+        <svg width={120} height={120} viewBox="0 0 120 120" style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx={60} cy={60} r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={3} />
+          <circle cx={60} cy={60} r={r} fill="none" stroke="#5B9E8A" strokeWidth={3}
+            strokeDasharray={circ} strokeDashoffset={offset}
+            strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
+        </svg>
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 24, fontWeight: 600, color: '#E8EAED',
+          fontVariantNumeric: 'tabular-nums lining-nums',
+        }}>{progress}%</div>
+      </div>
+      <div style={{ marginTop: 16, fontSize: 10, color: '#5C6370', letterSpacing: '1px', textTransform: 'uppercase' }}>
+        {status}
+      </div>
+    </div>
+  );
+}
+
+function OrbitalLoader({ T, progress, status }) {
+  return <ArcLoader T={T} progress={progress} status={status} />;
+}
+
+// ─── Badge ────────────────────────────────────────────────────────────────────
+function Badge({ T, children, color = 'green' }) {
+  const bg = color === 'green' ? T.successBg : color === 'orange' ? T.warningBg : T.dangerBg;
+  const fg = color === 'green' ? T.success : color === 'orange' ? T.warning : T.danger;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      padding: '2px 8px',
+      borderRadius: 6,
+      fontSize: 10, fontWeight: 600,
+      background: bg, color: fg,
+      letterSpacing: '0.02em',
+    }}>{children}</span>
+  );
+}
+
+// ─── Btn ──────────────────────────────────────────────────────────────────────
+function Btn({ T, variant = 'primary', children, onClick, style = {}, disabled = false, small = false }) {
+  const [hovered, setHovered] = useState(false);
+  const base = {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: small ? '4px 10px' : '6px 14px',
+    height: small ? 26 : 30,
+    borderRadius: 3, fontSize: small ? 11 : 12, fontWeight: 500,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    transition: 'background 0.15s ease, color 0.15s ease',
+    opacity: disabled ? 0.45 : 1,
+    letterSpacing: '0.01em',
+    lineHeight: 1,
+    boxShadow: 'none',
+    ...style,
+  };
+  const handlers = {
+    onMouseEnter: () => !disabled && setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  };
+  if (variant === 'primary') return (
+    <button onClick={onClick} disabled={disabled} {...handlers} style={{
+      ...base, background: hovered && !disabled ? T.btnPrimaryHover : T.btnPrimaryBg,
+      color: T.btnPrimaryText, border: 'none',
+    }}>{children}</button>
+  );
+  if (variant === 'danger') return (
+    <button onClick={onClick} disabled={disabled} {...handlers} style={{
+      ...base, background: hovered && !disabled ? '#CC2020' : T.danger,
+      color: '#fff', border: 'none',
+    }}>{children}</button>
+  );
+  return (
+    <button onClick={onClick} disabled={disabled} {...handlers} style={{
+      ...base,
+      background: hovered && !disabled ? 'rgba(255,255,255,0.03)' : 'transparent',
+      color: hovered && !disabled ? T.text : T.textSecondary,
+      border: `1px solid ${hovered ? T.borderHover : T.border}`,
+    }}>{children}</button>
+  );
+}
+
+// ─── Input ────────────────────────────────────────────────────────────────────
+function Input({ T, value, onChange, placeholder, type = 'text', style = {}, multiline = false, rows = 3 }) {
+  const [focused, setFocused] = useState(false);
+  const bgInput = T.bg === '#1B2028' ? '#141820' : T.bgInput;
+  const base = {
+    width: '100%',
+    padding: multiline ? '8px 8px' : '0 8px',
+    height: multiline ? 'auto' : 32,
+    borderRadius: 3,
+    border: `1px solid ${focused ? T.accentBorder : T.border}`,
+    background: bgInput,
+    color: T.text, fontSize: 13, outline: `${focused ? '1px solid ' + T.accentText : 'none'}`,
+    outlineOffset: '1px',
+    fontFamily: "'DM Sans', system-ui, sans-serif",
+    transition: 'border-color 0.15s',
+    lineHeight: 1.5,
+    ...style,
+  };
+  if (multiline) return (
+    <textarea value={value} onChange={onChange} placeholder={placeholder} rows={rows}
+      style={{ ...base, paddingTop: 8, paddingBottom: 8, resize: 'vertical', height: 'auto' }}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} />
+  );
+  return (
+    <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={base}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} />
+  );
+}
+
+// ─── Select ───────────────────────────────────────────────────────────────────
+function Select({ T, value, onChange, options, style = {} }) {
+  return (
+    <select value={value} onChange={onChange} style={{
+      padding: '0 10px', height: 32, borderRadius: 6, border: `1px solid ${T.border}`,
+      background: T.bgInput, color: T.text, fontSize: 13, outline: 'none',
+      fontFamily: "'DM Sans', system-ui, sans-serif", cursor: 'pointer',
+      transition: 'border-color 0.15s', ...style,
+    }}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+// ─── Card ─────────────────────────────────────────────────────────────────────
+function Card({ T, children, style = {}, onClick, hover = false }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div onClick={onClick}
+      onMouseEnter={hover ? () => setHovered(true) : undefined}
+      onMouseLeave={hover ? () => setHovered(false) : undefined}
+      style={{
+        background: T.bgCard,
+        border: `1px solid ${hovered ? T.borderHover : T.border}`,
+        borderRadius: 8,
+        transition: 'border-color 0.15s',
+        ...style,
+      }}>{children}</div>
+  );
+}
+
+// ─── CopyBtn ──────────────────────────────────────────────────────────────────
+function CopyBtn({ T, text, small = true }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button onClick={copy} title="Copy" style={{
+      padding: '3px 7px', borderRadius: 5, fontSize: 11, fontWeight: 500,
+      border: `1px solid ${T.border}`, background: T.bgElevated,
+      color: copied ? T.success : T.textMuted,
+      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+      transition: 'all 0.15s', flexShrink: 0,
+    }}>
+      <Icon name={copied ? 'check' : 'copy'} size={11} />
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+// ─── Field ────────────────────────────────────────────────────────────────────
+function Field({ T, label, children }) {
+  return (
+    <div>
+      <label style={{
+        fontSize: 11, fontWeight: 500, color: T.textMuted,
+        textTransform: 'uppercase', letterSpacing: '0.5px',
+        display: 'block', marginBottom: 5,
+      }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+// ─── Status helpers ───────────────────────────────────────────────────────────
+function statusColor(status) {
+  const m = { active: 'green', strategy_complete: 'green', paused: 'orange', archived: 'gray', pending_intake: 'orange' };
+  return m[status] || 'green';
+}
+function statusLabel(status) {
+  const m = { active: 'Active', strategy_complete: 'Strategy Complete', paused: 'Paused', archived: 'Archived', pending_intake: 'Pending Intake' };
+  return m[status] || status;
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+function Sidebar({ collapsed, onToggle, activeNav, onNav, user, onLogout, mode, toggleTheme, wsSelected, isClient = false }) {
+  const navItems = isClient
+    ? [
+        { id: 'overview', icon: 'barChart', label: 'Overview' },
+        { id: 'intake', icon: 'document', label: 'Intake' },
+        { id: 'strategy', icon: 'crosshair', label: 'Strategy' },
+        { id: 'intelligence', icon: 'radar', label: 'Intelligence' },
+      ]
+    : [
+        { id: 'workspaces', icon: 'grid', label: 'Workspaces' },
+        ...(wsSelected ? [
+          { id: 'intake', icon: 'document', label: 'Intake' },
+          { id: 'strategy', icon: 'crosshair', label: 'Strategy' },
+          { id: 'intelligence', icon: 'radar', label: 'Intelligence' },
+        ] : []),
+        { id: 'accounts', icon: 'sliders', label: 'Accounts' },
+      ];
+
+  return (
+    <div style={{
+      width: collapsed ? 56 : 200,
+      height: '100%',
+      background: '#13161A',
+      borderRight: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', flexDirection: 'column',
+      transition: 'width 200ms ease',
+      flexShrink: 0, position: 'relative', zIndex: 50,
+      overflow: 'hidden',
+    }}>
+      {/* Logo */}
+      <div style={{
+        height: 48, display: 'flex', alignItems: 'center',
+        padding: '0 14px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        gap: 10, flexShrink: 0,
+      }}>
+        {collapsed ? (
+          <img src="./logo-dark-sm.png" alt="Ridge" style={{ height: 20, objectFit: 'contain', flexShrink: 0 }} />
+        ) : (
+          <img src="./logo-dark.png" alt="Ridge" style={{ height: 20, objectFit: 'contain' }} />
+        )}
+      </div>
+
+      {/* Menu toggle */}
+      <button onClick={onToggle} style={{
+        width: '100%', height: 36, display: 'flex', alignItems: 'center',
+        padding: '0 16px', gap: 12, color: '#6B7280',
+        background: 'none', border: 'none', cursor: 'pointer',
+        transition: 'color 0.15s', flexShrink: 0,
+      }}>
+        <Icon name="menu" size={15} color="#6B7280" style={{ flexShrink: 0 }} />
+        {!collapsed && <span style={{ fontSize: 12, color: '#6B7280', whiteSpace: 'nowrap' }}>Menu</span>}
+      </button>
+
+      {/* Nav items */}
+      <div style={{ flex: 1, padding: '4px 0', overflowY: 'auto', overflowX: 'hidden' }}>
+        {navItems.map(item => {
+          const active = activeNav === item.id;
+          return (
+            <button key={item.id} onClick={() => onNav(item.id)} style={{
+              width: '100%', height: 32, display: 'flex', alignItems: 'center',
+              padding: collapsed ? '0 0 0 16px' : '0 14px', gap: 14,
+              background: active ? 'rgba(28,60,52,0.12)' : 'transparent',
+              borderLeft: active ? '2px solid #1C3C34' : '2px solid transparent',
+              borderRight: 'none', borderTop: 'none', borderBottom: 'none',
+              color: active ? '#E8EAED' : '#9AA0A8',
+              cursor: 'pointer', transition: 'all 150ms ease',
+            }}>
+              <Icon name={item.icon} size={16} color={active ? '#5B9E8A' : '#5C6370'} style={{ flexShrink: 0 }} />
+              {!collapsed && (
+                <span style={{ fontSize: 10, fontWeight: active ? 600 : 400, whiteSpace: 'nowrap', color: active ? '#E8EAED' : '#9AA0A8' }}>
+                  {item.label}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Bottom */}
+      <div style={{ padding: collapsed ? '8px 0' : '8px 14px', borderTop: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+        <button onClick={toggleTheme} style={{
+          width: '100%', height: 30, display: 'flex', alignItems: 'center',
+          gap: 10, background: 'none', border: 'none', cursor: 'pointer',
+          padding: collapsed ? '0 0 0 16px' : 0, color: '#6B7280',
+        }}>
+          <Icon name={mode === 'dark' ? 'sun' : 'moon'} size={15} color="#5C6370" style={{ flexShrink: 0 }} />
+          {!collapsed && <span style={{ fontSize: 12, color: '#6B7280' }}>{mode === 'dark' ? 'Light mode' : 'Dark mode'}</span>}
+        </button>
+        {!collapsed && user && (
+          <div style={{ marginTop: 6, fontSize: 11, color: '#5C6370', paddingLeft: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user.name || user.email}
+          </div>
+        )}
+        <button onClick={onLogout} style={{
+          width: '100%', height: 30, display: 'flex', alignItems: 'center',
+          gap: 10, background: 'none', border: 'none', cursor: 'pointer',
+          padding: collapsed ? '0 0 0 16px' : 0, marginTop: 2, color: '#5C6370',
+        }}>
+          <Icon name="logout" size={15} color="#5C6370" style={{ flexShrink: 0 }} />
+          {!collapsed && <span style={{ fontSize: 12, color: '#6B7280' }}>Sign out</span>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Header Bar ──────────────────────────────────────────────────────────────
+function HeaderBar({ T, breadcrumbs = [], actions, collapsed, onToggleSidebar }) {
+  // breadcrumbs can be array of {label, onClick} objects or plain strings
+  const crumbs = breadcrumbs.map(c => typeof c === 'string' ? { label: c } : c);
+  return (
+    <div style={{
+      height: 40, background: T.bg,
+      boxShadow: '0 1px 0 rgba(0,0,0,0.18), 0 4px 8px rgba(0,0,0,0.08)',
+      display: 'flex', alignItems: 'center',
+      padding: '0 20px', gap: 12, flexShrink: 0,
+      position: 'sticky', top: 0, zIndex: 40,
+    }}>
+      {collapsed && (
+        <button onClick={onToggleSidebar} style={{
+          width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'none', border: 'none', cursor: 'pointer', color: T.textMuted,
+          borderRadius: 3, flexShrink: 0,
+        }}>
+          <Icon name="menu" size={15} color={T.textMuted} />
+        </button>
+      )}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {crumbs.map((crumb, i) => (
+          <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {i > 0 && <span style={{ fontSize: 11, color: T.textFaint, margin: '0 2px' }}>/</span>}
+            <span style={{
+              fontSize: i === crumbs.length - 1 ? 12 : 11,
+              fontWeight: i === crumbs.length - 1 ? 600 : 400,
+              color: i === crumbs.length - 1 ? T.text : T.textMuted,
+              cursor: crumb.onClick ? 'pointer' : 'default',
+            }} onClick={crumb.onClick}>{crumb.label}</span>
+          </span>
+        ))}
+      </div>
+      {actions && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Modal Overlay ────────────────────────────────────────────────────────────
+function ModalOverlay({ T, onClose, children, maxWidth = 520 }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0,
+      background: 'rgba(0,0,0,0.75)',
+      backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 999, padding: 24,
+      animation: 'fadeScaleIn 0.15s ease',
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: '#141820', border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 4, boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+        width: '100%', maxWidth, padding: 20,
+        maxHeight: '90vh', overflowY: 'auto',
+        animation: 'fadeScaleIn 0.18s cubic-bezier(0.16,1,0.3,1)',
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Google Sign-In Config ────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID = '647124593506-5iaaulgki1hac6006fls493bp4fbgjl5.apps.googleusercontent.com';
+
+// ─── Login Screen ─────────────────────────────────────────────────────────────
+function LoginScreen({ T, onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const googleBtnRef = useRef(null);
+
+  const handleGoogleResponse = useCallback(async (response) => {
+    setError(''); setGoogleLoading(true);
+    try {
+      const data = await apiFetch('/auth/google', {
+        method: 'POST', body: JSON.stringify({ credential: response.credential }),
+      });
+      if (data.error) { setError(data.error); setGoogleLoading(false); return; }
+      SESSION_TOKEN = data.token;
+      onLogin(data.user, data.token);
+    } catch (e) {
+      setError('Google sign-in failed. Please try again.'); setGoogleLoading(false);
+    }
+  }, [onLogin]);
+
+  const [gsiReady, setGsiReady] = useState(false);
+  const [gsiError, setGsiError] = useState(false);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    const initGoogle = () => {
+      try {
+        if (window.google && window.google.accounts) {
+          window.google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleGoogleResponse,
+            auto_select: false,
+            itp_support: true,
+          });
+          if (googleBtnRef.current) {
+            window.google.accounts.id.renderButton(googleBtnRef.current, {
+              type: 'standard',
+              theme: 'filled_black',
+              size: 'large',
+              width: 364,
+              text: 'signin_with',
+              shape: 'rectangular',
+              logo_alignment: 'left',
+            });
+          }
+          setGsiReady(true);
+        }
+      } catch (err) {
+        console.warn('Google Sign-In init failed:', err);
+        setGsiError(true);
+      }
+    };
+    if (window.google && window.google.accounts) {
+      initGoogle();
+    } else {
+      // Dynamically load Google Identity Services script
+      if (!document.getElementById('gsi-script')) {
+        const s = document.createElement('script');
+        s.id = 'gsi-script';
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.defer = true;
+        s.onerror = () => { console.warn('Failed to load Google Sign-In script'); setGsiError(true); };
+        document.head.appendChild(s);
+      }
+      const checkInterval = setInterval(() => {
+        try {
+          if (window.google && window.google.accounts) {
+            clearInterval(checkInterval);
+            initGoogle();
+          }
+        } catch (err) {
+          clearInterval(checkInterval);
+          console.warn('Google Sign-In check failed:', err);
+          setGsiError(true);
+        }
+      }, 200);
+      // Stop trying after 8 seconds
+      const timeout = setTimeout(() => { clearInterval(checkInterval); setGsiError(true); }, 8000);
+      return () => { clearInterval(checkInterval); clearTimeout(timeout); };
+    }
+  }, [handleGoogleResponse]);
+
+  const handleLogin = async () => {
+    setError(''); setLoading(true);
+    try {
+      const data = await apiFetch('/auth/login', {
+        method: 'POST', body: JSON.stringify({ email, password }),
+      });
+      if (data.error) { setError(data.error); setLoading(false); return; }
+      SESSION_TOKEN = data.token;
+      onLogin(data.user, data.token);
+    } catch (e) {
+      setError('Connection error. Please try again.'); setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && email && password && !loading) handleLogin();
+  };
+
+  // Custom Google button for when GIS library is not loaded or no client ID
+  const GoogleIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 48 48">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+    </svg>
+  );
+
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#1B2028',
+      backgroundImage: 'radial-gradient(ellipse at 50% 0%, rgba(28,60,52,0.18) 0%, transparent 65%)',
+    }}>
+      <div style={{ width: '100%', maxWidth: 420, padding: '0 20px' }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <img src="./logo-dark.png" alt="Ridge" style={{ height: 26, objectFit: 'contain' }} />
+        </div>
+
+        {/* Card */}
+        <div style={{
+          background: '#232A33',
+          border: '1px solid rgba(28,60,52,0.4)',
+          boxShadow: '0 0 32px rgba(28,60,52,0.12), 0 4px 16px rgba(0,0,0,0.4)',
+          borderRadius: 10, padding: 28,
+        }}>
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#E8EAED', marginBottom: 4 }}>
+              Sign in
+            </div>
+            <div style={{ fontSize: 12, color: '#5C6370' }}>
+              Enter your credentials to continue
+            </div>
+          </div>
+
+          {/* Google Sign-In */}
+          <div style={{ marginBottom: 20 }}>
+            {GOOGLE_CLIENT_ID && !gsiError && (
+              <div ref={googleBtnRef} style={{ display: gsiReady ? 'flex' : 'none', justifyContent: 'center' }} />
+            )}
+            {(!gsiReady || gsiError || !GOOGLE_CLIENT_ID) && (
+              <button
+                onClick={() => {
+                  if (!GOOGLE_CLIENT_ID || gsiError) {
+                    setError('Google Sign-In is temporarily unavailable. Please use email and password.');
+                  }
+                }}
+                style={{
+                  width: '100%', height: 40, borderRadius: 6, fontSize: 13, fontWeight: 500,
+                  background: '#131314', color: '#E3E3E3', border: '1px solid #5f6368',
+                  cursor: (!GOOGLE_CLIENT_ID || gsiError) ? 'pointer' : 'wait',
+                  display: gsiReady && !gsiError ? 'none' : 'flex',
+                  alignItems: 'center', justifyContent: 'center', gap: 10,
+                  fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+                  opacity: (!GOOGLE_CLIENT_ID || gsiError) ? 0.85 : 0.7,
+                }}
+              >
+                <GoogleIcon />
+                Sign in with Google
+              </button>
+            )}
+            {googleLoading && (
+              <div style={{ textAlign: 'center', marginTop: 8 }}>
+                <span style={{ fontSize: 12, color: '#5C6370' }}>Authenticating with Google...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
+            <span style={{ fontSize: 11, color: '#5C6370', textTransform: 'uppercase', letterSpacing: '0.5px' }}>or</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} onKeyDown={handleKeyDown}>
+            <div>
+              <label style={{
+                fontSize: 11, fontWeight: 500, color: '#5C6370',
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+                display: 'block', marginBottom: 5,
+              }}>Email</label>
+              <Input T={DARK} value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" type="email" />
+            </div>
+            <div>
+              <label style={{
+                fontSize: 11, fontWeight: 500, color: '#5C6370',
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+                display: 'block', marginBottom: 5,
+              }}>Password</label>
+              <Input T={DARK} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" type="password" />
+            </div>
+            {error && (
+              <div style={{
+                fontSize: 12, color: '#E25555', background: 'rgba(226,85,85,0.1)',
+                padding: '8px 12px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <Icon name="alertTriangle" size={13} color="#E25555" />
+                {error}
+              </div>
+            )}
+            <button onClick={handleLogin} disabled={loading || !email || !password} style={{
+              width: '100%', height: 36, borderRadius: 6, fontSize: 13, fontWeight: 500,
+              background: loading || !email || !password ? 'rgba(28,60,52,0.5)' : '#1C3C34',
+              color: '#FFFFFF', border: 'none', cursor: loading || !email || !password ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              transition: 'background 0.15s',
+              marginTop: 4,
+            }}>
+              {loading ? (
+                <><Icon name="loader" size={14} color="#fff" style={{ animation: 'spin 1s linear infinite' }} /> Signing in</>
+              ) : 'Sign In'}
+            </button>
+          </div>
+
+          {/* Terms of Service & Privacy Policy */}
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+            <span style={{ fontSize: 11, color: '#5C6370', lineHeight: 1.6 }}>
+              By signing in, you agree to Ridge's{' '}
+              <a href="https://fitzinvestments.com/privacy" target="_blank" rel="noopener noreferrer" style={{
+                color: '#5B9E8A', textDecoration: 'none', fontWeight: 500,
+              }}
+                onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+              >Terms of Service</a>{' '}and{' '}
+              <a href="https://fitzinvestments.com/privacy" target="_blank" rel="noopener noreferrer" style={{
+                color: '#5B9E8A', textDecoration: 'none', fontWeight: 500,
+              }}
+                onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+              >Privacy Policy</a>.
+            </span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Workspace Card ───────────────────────────────────────────────────────────
+function WorkspaceCard({ T, ws, onClick }) {
+  const sc = statusColor(ws.status);
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: T.bgCard, border: `1px solid ${hovered ? T.borderHover : T.border}`,
+        borderRadius: 8, padding: '16px', cursor: 'pointer',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+        boxShadow: hovered ? T.shadowHover : 'none',
+      }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: T.text, marginRight: 8, lineHeight: 1.3 }}>{ws.name}</div>
+        <Badge T={T} color={sc}>{statusLabel(ws.status)}</Badge>
+      </div>
+      {ws.website && (
+        <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Icon name="globe" size={11} color={T.textMuted} />{ws.website}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 14, fontSize: 11, color: T.textMuted, fontVariantNumeric: 'tabular-nums lining-nums' }}>
+        <span>Intake: {ws.intake_count || 0}</span>
+        <span>Runs: {ws.runs_count || 0}</span>
+        {ws.created_at && <span>{ws.created_at.slice(0, 10)}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Create Workspace Modal ───────────────────────────────────────────────────
+function CreateWorkspaceModal({ T, onClose, onCreated }) {
+  const [name, setName] = useState('');
+  const [website, setWebsite] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!name) return;
+    setLoading(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const data = await apiFetch('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name, website, createdAt: today, status: 'pending_intake', clientEmail, notes }),
+    });
+    setLoading(false);
+    if (data.id) onCreated(data.id);
+  };
+
+  return (
+    <ModalOverlay T={T} onClose={onClose}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 18, letterSpacing: '-0.2px' }}>New Workspace</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field T={T} label="Company Name *"><Input T={T} value={name} onChange={e => setName(e.target.value)} placeholder="Acme Corp" /></Field>
+        <Field T={T} label="Website"><Input T={T} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://acme.com" /></Field>
+        <Field T={T} label="Client Email"><Input T={T} value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="contact@acme.com" /></Field>
+        <Field T={T} label="Notes"><Input T={T} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Internal notes…" multiline rows={2} /></Field>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+          <Btn T={T} variant="outline" onClick={onClose}>Cancel</Btn>
+          <Btn T={T} onClick={submit} disabled={loading || !name}>{loading ? 'Creating…' : 'Create Workspace'}</Btn>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// ─── Workspaces View ──────────────────────────────────────────────────────────
+function WorkspacesView({ T, onSelect, breadcrumbs, collapsed, onToggleSidebar }) {
+  const [workspaces, setWorkspaces] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showCreate, setShowCreate] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    const data = await apiFetch('/workspaces');
+    if (Array.isArray(data)) setWorkspaces(data);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = workspaces.filter(ws => {
+    const q = search.toLowerCase();
+    const matchSearch = !q || ws.name?.toLowerCase().includes(q) || ws.website?.toLowerCase().includes(q);
+    const matchStatus = statusFilter === 'all' || ws.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <HeaderBar T={T} breadcrumbs={breadcrumbs} collapsed={collapsed} onToggleSidebar={onToggleSidebar}
+        actions={
+          <Btn T={T} onClick={() => setShowCreate(true)} small>
+            <Icon name="plus" size={13} /> New Workspace
+          </Btn>
+        }
+      />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative' }}>
+            <Input T={T} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workspaces…" style={{ width: 200, paddingLeft: 30 }} />
+            <Icon name="search" size={13} color={T.textMuted} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          </div>
+          <Select T={T} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} options={[
+            { value: 'all', label: 'All Statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'strategy_complete', label: 'Strategy Complete' },
+            { value: 'pending_intake', label: 'Pending Intake' },
+            { value: 'paused', label: 'Paused' },
+            { value: 'archived', label: 'Archived' },
+          ]} />
+          <span style={{ fontSize: 12, color: T.textMuted, fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' }}>
+            {workspaces.length} workspace{workspaces.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden' }}>
+            {[1,2,3,4].map(i => (
+              <div key={i} style={{ display: 'flex', gap: 16, padding: '0 16px', height: 36, alignItems: 'center', borderBottom: `1px solid ${T.border}` }}>
+                <Skeleton width="20%" height={11} />
+                <Skeleton width="16%" height={11} />
+                <Skeleton width="10%" height={9} />
+                <Skeleton width="8%" height={9} />
+                <Skeleton width="8%" height={9} />
+                <Skeleton width="12%" height={9} />
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+            <Icon name="briefcase" size={40} color={T.textMuted} style={{ display: 'block', margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6 }}>No workspaces found</div>
+            <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 20, lineHeight: 1.6 }}>Create your first workspace to get started.</div>
+            <Btn T={T} onClick={() => setShowCreate(true)}>
+              <Icon name="plus" size={13} /> Create Workspace
+            </Btn>
+          </div>
+        ) : (
+          <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#0D0F12', position: 'sticky', top: 0, zIndex: 1 }}>
+                  {['Name', 'Website', 'Status', 'Intake', 'Runs', 'Created'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '0 16px', height: 32,
+                      fontSize: 10, fontWeight: 500, color: '#5C6370',
+                      textTransform: 'uppercase', letterSpacing: '0.5px',
+                      borderBottom: `1px solid ${T.border}`,
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((ws, i) => {
+                  const sc = statusColor(ws.status);
+                  const dotColor = sc === 'green' ? T.success : sc === 'orange' ? T.warning : T.danger;
+                  return (
+                    <tr key={ws.id} onClick={() => onSelect(ws)}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      style={{
+                        height: 36, cursor: 'pointer',
+                        background: 'transparent',
+                        transition: 'background 100ms',
+                        borderBottom: i < filtered.length - 1 ? `1px solid ${T.border}` : 'none',
+                      }}>
+                      <td style={{ padding: '0 16px', fontSize: 13, fontWeight: 600, color: T.text }}>{ws.name}</td>
+                      <td style={{ padding: '0 16px', fontSize: 12, color: T.textMuted }}>{ws.website || '—'}</td>
+                      <td style={{ padding: '0 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                          <span style={{ fontSize: 11, color: dotColor, fontWeight: 500 }}>{statusLabel(ws.status)}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '0 16px', fontSize: 12, color: T.textMuted, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>{ws.intake_count || 0}</td>
+                      <td style={{ padding: '0 16px', fontSize: 12, color: T.textMuted, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>{ws.runs_count || 0}</td>
+                      <td style={{ padding: '0 16px', fontSize: 11, color: T.textMuted }}>{ws.created_at ? ws.created_at.slice(0, 10) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showCreate && (
+        <CreateWorkspaceModal T={T} onClose={() => setShowCreate(false)} onCreated={id => {
+          setShowCreate(false); load();
+        }} />
+      )}
+    </div>
+  );
+}
+
+// ─── Intake Form ──────────────────────────────────────────────────────────────
+const INTAKE_DEFAULTS = {
+  company: { name: '', website: '', description: '', size_range: '', industry: '' },
+  offer: { name: '', description: '', pricing_model: '', avg_deal_size: '', differentiators: '' },
+  icp: { description: '', company_size: { min: '', max: '' }, industries: '', geographies: '', technographics: '', excluded_segments: '' },
+  value_props: { primary: '', secondary: '', proof_points: '' },
+  pain_points: { primary: '', secondary: '', status_quo_cost: '' },
+  constraints: { excluded_titles: '', tone_preference: '', compliance_notes: '', other: '' },
+};
+
+function deepMerge(target, source) {
+  const result = { ...target };
+  for (const key in source) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      result[key] = deepMerge(target[key] || {}, source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
+function mergeIntoEmpty(existing, scanned) {
+  const result = JSON.parse(JSON.stringify(existing));
+  for (const section in scanned) {
+    if (!result[section]) result[section] = {};
+    if (typeof scanned[section] === 'object' && !Array.isArray(scanned[section])) {
+      for (const field in scanned[section]) {
+        if (typeof scanned[section][field] === 'object' && !Array.isArray(scanned[section][field])) {
+          if (!result[section][field]) result[section][field] = {};
+          for (const sub in scanned[section][field]) {
+            if (!result[section][field][sub]) result[section][field][sub] = scanned[section][field][sub];
+          }
+        } else {
+          if (!result[section][field]) result[section][field] = scanned[section][field];
+        }
+      }
+    }
+  }
+  return result;
+}
+
+function buildIntakeBlock(intake) {
+  const i = intake;
+  return `Company: ${i.company.name} | ${i.company.website} | ${i.company.industry} | Size: ${i.company.size_range} | ${i.company.description}
+Offer: ${i.offer.name} | ${i.offer.description} | Pricing: ${i.offer.pricing_model} | Deal: ${i.offer.avg_deal_size} | Diff: ${i.offer.differentiators}
+ICP: ${i.icp.description} | Size: ${i.icp.company_size.min}-${i.icp.company_size.max} | Industries: ${i.icp.industries} | Geo: ${i.icp.geographies} | Tech: ${i.icp.technographics} | Exclude: ${i.icp.excluded_segments}
+Value Props: ${i.value_props.primary} | ${i.value_props.secondary} | Proof: ${i.value_props.proof_points}
+Pain Points: ${i.pain_points.primary} | ${i.pain_points.secondary} | Cost: ${i.pain_points.status_quo_cost}
+Constraints: Exclude titles: ${i.constraints.excluded_titles} | Tone: ${i.constraints.tone_preference} | Compliance: ${i.constraints.compliance_notes} | Other: ${i.constraints.other}`;
+}
+
+function IntakeSection({ T, title, iconName, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgCard, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(!open)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '11px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
+        color: T.text, fontWeight: 600, fontSize: 13, fontFamily: 'inherit',
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.text }}>
+          <Icon name={iconName} size={14} color={T.accentText} />
+          {title}
+        </span>
+        <Icon name="chevronDown" size={14} color={T.textMuted} style={{
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform 0.2s ease',
+        }} />
+      </button>
+      {open && (
+        <div style={{ padding: '4px 14px 14px', borderTop: `1px solid ${T.border}` }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IntakeField({ T, label, value, onChange, multiline = false, rows = 3, hint }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+        <label style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</label>
+        {hint && <span style={{ fontSize: 11, color: T.textFaint, fontStyle: 'italic' }}>{hint}</span>}
+      </div>
+      <Input T={T} value={value || ''} onChange={onChange} multiline={multiline} rows={rows} />
+    </div>
+  );
+}
+
+function IntakeForm({ T, workspaceId, onIntakeChange }) {
+  const [intake, setIntake] = useState(INTAKE_DEFAULTS);
+  const [scanUrl, setScanUrl] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState('');
+  const [notes, setNotes] = useState('');
+  const [notesSource, setNotesSource] = useState('Circleback');
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    apiFetch(`/intake?workspace_id=${workspaceId}`).then(data => {
+      if (data && Object.keys(data).length > 0) {
+        const merged = deepMerge(INTAKE_DEFAULTS, data);
+        setIntake(merged);
+        if (onIntakeChange) onIntakeChange(merged);
+      }
+    });
+  }, [workspaceId]);
+
+  const save = useCallback((newIntake) => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      apiFetch('/intake', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: newIntake }) })
+        .then(() => showToast('Intake saved', 'success'));
+      if (onIntakeChange) onIntakeChange(newIntake);
+    }, 800);
+  }, [workspaceId]);
+
+  const update = (section, field, val) => {
+    const next = { ...intake, [section]: { ...intake[section], [field]: val } };
+    setIntake(next); save(next);
+  };
+  const updateNested = (section, sub, field, val) => {
+    const next = { ...intake, [section]: { ...intake[section], [sub]: { ...intake[section][sub], [field]: val } } };
+    setIntake(next); save(next);
+  };
+
+  const handleScan = async () => {
+    if (!scanUrl) return;
+    setScanning(true); setScanMsg('Scanning website with AI + web search…');
+    try {
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scan_website', url: scanUrl }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const parsed = robustJsonParse(result.text);
+        const merged = mergeIntoEmpty(intake, parsed);
+        setIntake(merged); save(merged);
+        setScanMsg(`Scan complete via ${result.provider} (${result.model}). Empty fields filled from web research.`);
+        showToast('Website scanned — data merged into empty fields', 'success');
+      } else {
+        setScanMsg('Scan failed: ' + (result.error || 'Unknown error'));
+        showToast('Website scan failed', 'error');
+      }
+    } catch (err) {
+      setScanMsg('Scan error: ' + err.message);
+      showToast('Scan error', 'error');
+    }
+    setScanning(false);
+  };
+
+  const handleImport = async () => {
+    if (!notes) return;
+    setImporting(true); setImportMsg('Extracting structured data from meeting notes with AI…');
+    try {
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'extract_notes', notes: notes, source: notesSource }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const parsed = robustJsonParse(result.text);
+        const merged = mergeIntoEmpty(intake, parsed);
+        setIntake(merged); save(merged);
+        setImportMsg(`Import complete via ${result.provider}. Data extracted and merged into empty fields.`);
+        showToast('Meeting notes imported — data merged', 'success');
+      } else {
+        setImportMsg('Import failed: ' + (result.error || 'Unknown error'));
+        showToast('Notes import failed', 'error');
+      }
+    } catch (err) {
+      setImportMsg('Import error: ' + err.message);
+      showToast('Import error', 'error');
+    }
+    setImporting(false);
+  };
+
+  return (
+    <div>
+      {/* Tools row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }} className="two-col-grid">
+        {/* Scanner */}
+        <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="search" size={12} color={T.accentText} /> Website Scanner
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input T={T} value={scanUrl} onChange={e => setScanUrl(e.target.value)} placeholder="https://company.com" style={{ flex: 1 }} />
+            <Btn T={T} onClick={handleScan} disabled={scanning || !scanUrl} small>
+              {scanning ? <><Icon name="loader" size={12} style={{ animation: 'spin 1s linear infinite' }} /> Scanning</> : 'Scan'}
+            </Btn>
+          </div>
+          {scanMsg && <div style={{ marginTop: 7, fontSize: 11, color: T.textMuted, lineHeight: 1.5 }}>{scanMsg}</div>}
+        </div>
+
+        {/* Meeting Notes */}
+        <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="clipboard" size={12} color={T.accentText} /> Meeting Notes
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+            <Select T={T} value={notesSource} onChange={e => setNotesSource(e.target.value)}
+              options={[{ value: 'Circleback', label: 'Circleback' }, { value: 'Granola', label: 'Granola' }, { value: 'Fathom', label: 'Fathom' }, { value: 'Otter', label: 'Otter' }, { value: 'Raw Text', label: 'Raw Text' }]}
+              style={{ flex: 1 }} />
+            <Btn T={T} onClick={handleImport} disabled={importing || !notes} small>
+              {importing ? <><Icon name="loader" size={12} style={{ animation: 'spin 1s linear infinite' }} /> Importing</> : 'Import'}
+            </Btn>
+          </div>
+          <Input T={T} value={notes} onChange={e => setNotes(e.target.value)} multiline rows={2} placeholder="Paste meeting notes here…" />
+          {importMsg && <div style={{ marginTop: 7, fontSize: 11, color: T.textMuted, lineHeight: 1.5 }}>{importMsg}</div>}
+        </div>
+      </div>
+
+      <IntakeSection T={T} title="Company" iconName="building" defaultOpen={true}>
+        <IntakeField T={T} label="Company Name" value={intake.company.name} onChange={e => update('company', 'name', e.target.value)} />
+        <IntakeField T={T} label="Website" value={intake.company.website} onChange={e => update('company', 'website', e.target.value)} />
+        <IntakeField T={T} label="Description" value={intake.company.description} onChange={e => update('company', 'description', e.target.value)} multiline rows={3} hint="What does the company do?" />
+        <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <IntakeField T={T} label="Size Range" value={intake.company.size_range} onChange={e => update('company', 'size_range', e.target.value)} hint="e.g. 50-200" />
+          <IntakeField T={T} label="Industry" value={intake.company.industry} onChange={e => update('company', 'industry', e.target.value)} />
+        </div>
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Offer" iconName="briefcase">
+        <IntakeField T={T} label="Offer Name" value={intake.offer.name} onChange={e => update('offer', 'name', e.target.value)} />
+        <IntakeField T={T} label="Description" value={intake.offer.description} onChange={e => update('offer', 'description', e.target.value)} multiline rows={3} />
+        <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <IntakeField T={T} label="Pricing Model" value={intake.offer.pricing_model} onChange={e => update('offer', 'pricing_model', e.target.value)} />
+          <IntakeField T={T} label="Avg Deal Size" value={intake.offer.avg_deal_size} onChange={e => update('offer', 'avg_deal_size', e.target.value)} hint="e.g. $25,000" />
+        </div>
+        <IntakeField T={T} label="Differentiators" value={intake.offer.differentiators} onChange={e => update('offer', 'differentiators', e.target.value)} multiline rows={2} />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Ideal Customer Profile (ICP)" iconName="target">
+        <IntakeField T={T} label="ICP Description" value={intake.icp.description} onChange={e => update('icp', 'description', e.target.value)} multiline rows={3} />
+        <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <IntakeField T={T} label="Company Size Min" value={intake.icp.company_size?.min} onChange={e => updateNested('icp', 'company_size', 'min', e.target.value)} hint="employees" />
+          <IntakeField T={T} label="Company Size Max" value={intake.icp.company_size?.max} onChange={e => updateNested('icp', 'company_size', 'max', e.target.value)} hint="employees" />
+        </div>
+        <IntakeField T={T} label="Target Industries" value={intake.icp.industries} onChange={e => update('icp', 'industries', e.target.value)} />
+        <IntakeField T={T} label="Geographies" value={intake.icp.geographies} onChange={e => update('icp', 'geographies', e.target.value)} />
+        <IntakeField T={T} label="Technographics" value={intake.icp.technographics} onChange={e => update('icp', 'technographics', e.target.value)} hint="Tools they use" />
+        <IntakeField T={T} label="Excluded Segments" value={intake.icp.excluded_segments} onChange={e => update('icp', 'excluded_segments', e.target.value)} />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Value Propositions" iconName="diamond">
+        <IntakeField T={T} label="Primary Value Prop" value={intake.value_props.primary} onChange={e => update('value_props', 'primary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Secondary Value Prop" value={intake.value_props.secondary} onChange={e => update('value_props', 'secondary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Proof Points" value={intake.value_props.proof_points} onChange={e => update('value_props', 'proof_points', e.target.value)} multiline rows={3} hint="Stats, case studies, metrics" />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Pain Points" iconName="alertTriangle">
+        <IntakeField T={T} label="Primary Pain Point" value={intake.pain_points.primary} onChange={e => update('pain_points', 'primary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Secondary Pain Point" value={intake.pain_points.secondary} onChange={e => update('pain_points', 'secondary', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Status Quo Cost" value={intake.pain_points.status_quo_cost} onChange={e => update('pain_points', 'status_quo_cost', e.target.value)} multiline rows={2} hint="What does NOT solving this cost them?" />
+      </IntakeSection>
+
+      <IntakeSection T={T} title="Constraints" iconName="shield">
+        <IntakeField T={T} label="Excluded Titles" value={intake.constraints.excluded_titles} onChange={e => update('constraints', 'excluded_titles', e.target.value)} hint="Titles NOT to contact" />
+        <IntakeField T={T} label="Tone Preference" value={intake.constraints.tone_preference} onChange={e => update('constraints', 'tone_preference', e.target.value)} hint="e.g. Professional, casual" />
+        <IntakeField T={T} label="Compliance Notes" value={intake.constraints.compliance_notes} onChange={e => update('constraints', 'compliance_notes', e.target.value)} multiline rows={2} />
+        <IntakeField T={T} label="Other Constraints" value={intake.constraints.other} onChange={e => update('constraints', 'other', e.target.value)} multiline rows={2} />
+      </IntakeSection>
+
+      <div style={{ fontSize: 11, color: T.textMuted, textAlign: 'center', padding: '8px 0' }}>
+        Auto-saving on every change
+      </div>
+    </div>
+  );
+}
+
+// ─── Strategy Generator ───────────────────────────────────────────────────────
+function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState('');
+  const [running, setRunning] = useState(false);
+  const [model, setModel] = useState('sonnet');
+  const [error, setError] = useState('');
+
+  const runStrategyLive = async () => {
+    setRunning(true); setProgress(0); setError('');
+    setStatus('Loading intake data…');
+    setProgress(5);
+
+    const currentIntake = intake || INTAKE_DEFAULTS;
+    const companyName = currentIntake.company.name || 'Unknown Company';
+    const intakeBlock = buildIntakeBlock(currentIntake);
+
+    setProgress(10); setStatus('Generating research & targeting (Part A)…');
+
+    try {
+      let resA, resB;
+      try {
+        const rawA = await fetch(AI_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'strategy_part_a', company_name: companyName, intake_block: intakeBlock, model }),
+        });
+        resA = await rawA.json();
+      } catch (e) {
+        resA = { ok: false, error: 'Part A network error: ' + e.message };
+      }
+
+      setProgress(45); setStatus('Part A received. Generating execution & messaging (Part B)…');
+
+      try {
+        const rawB = await fetch(AI_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'strategy_part_b', company_name: companyName, intake_block: intakeBlock, model }),
+        });
+        resB = await rawB.json();
+      } catch (e) {
+        resB = { ok: false, error: 'Part B network error: ' + e.message };
+      }
+
+      setProgress(70); setStatus('Both responses received, parsing…');
+
+      let parsedA = {}, parsedB = {};
+      if (resA.ok && resA.text) {
+        try { parsedA = robustJsonParse(resA.text); } catch (e) { console.warn('Part A parse error:', e); }
+      } else {
+        console.warn('Part A failed:', resA.error);
+      }
+      if (resB.ok && resB.text) {
+        try { parsedB = robustJsonParse(resB.text); } catch (e) { console.warn('Part B parse error:', e); }
+      } else {
+        console.warn('Part B failed:', resB.error);
+      }
+
+      if (!resA.ok && !resB.ok) {
+        setError(`Both API calls failed. A: ${resA.error || 'unknown'}. B: ${resB.error || 'unknown'}`);
+        setRunning(false);
+        showToast('Strategy generation failed', 'error');
+        return;
+      }
+
+      setProgress(85); setStatus('Merging strategy halves…');
+      const fullStrategy = { ...parsedA, ...parsedB };
+
+      setProgress(92); setStatus('Saving strategy…');
+      await apiFetch('/strategy', {
+        method: 'POST',
+        body: JSON.stringify({ workspace_id: workspaceId, data: fullStrategy }),
+      });
+
+      setProgress(100); setStatus(`Strategy complete! Generated via ${resA.provider || 'AI'} (${resA.model || model})`);
+      showToast('Strategy generated successfully', 'success');
+      onStrategyGenerated(fullStrategy);
+    } catch (err) {
+      setError('Network error: ' + err.message);
+      showToast('Strategy generation error', 'error');
+    }
+    setRunning(false);
+  };
+
+  const runStrategyDemo = async () => {
+    setRunning(true); setProgress(0); setStatus('Loading demo strategy…');
+    const steps = [
+      [400, 25, 'Simulating Part A…'], [400, 50, 'Simulating Part B…'],
+      [300, 75, 'Merging…'], [200, 100, 'Demo strategy loaded!'],
+    ];
+    for (const [delay, pct, msg] of steps) {
+      await new Promise(r => setTimeout(r, delay));
+      setProgress(pct); setStatus(msg);
+    }
+    await apiFetch('/strategy', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: DEMO_STRATEGY }) });
+    onStrategyGenerated(DEMO_STRATEGY);
+    setRunning(false);
+  };
+
+  return (
+    <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 14 }}>
+      <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>Strategy Generation</div>
+      <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
+        Runs two AI calls (Research &amp; Targeting + Execution &amp; Messaging) via Claude Sonnet, with OpenAI fallback. Merges into a complete 11-section strategy.
+      </div>
+
+      {running ? (
+        <OrbitalLoader T={T} progress={progress} status={status} />
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</span>
+            <select value={model} onChange={e => setModel(e.target.value)} style={{
+              padding: '3px 8px', borderRadius: 5, border: `1px solid ${T.border}`, background: T.bgInput,
+              color: T.text, fontSize: 12, fontFamily: 'inherit', height: 26,
+            }}>
+              <option value="sonnet">Claude Sonnet (Best)</option>
+              <option value="haiku">Claude Haiku (Fast)</option>
+              <option value="gpt4o">GPT-4o (Fallback)</option>
+              <option value="gpt4o-mini">GPT-4o Mini (Fast/Cheap)</option>
+            </select>
+          </div>
+          {error && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 6, background: T.dangerBg, color: T.danger, fontSize: 12, display: 'flex', alignItems: 'flex-start', gap: 7, borderLeft: `3px solid ${T.danger}` }}>
+              <Icon name="alertTriangle" size={13} color={T.danger} style={{ flexShrink: 0, marginTop: 1 }} />
+              {error}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Btn T={T} onClick={runStrategyLive}>
+              <Icon name="play" size={13} /> Run Strategy (AI)
+            </Btn>
+            <Btn T={T} onClick={runStrategyDemo} variant="outline">
+              Demo Data
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Strategy Tabs Config ─────────────────────────────────────────────────────
+const STRATEGY_TABS = [
+  { id: 'icp', label: 'ICP Validation', icon: 'target' },
+  { id: 'dm', label: 'Decision-Maker', icon: 'user' },
+  { id: 'channel', label: 'Channel Strategy', icon: 'broadcast' },
+  { id: 'messaging', label: 'Messaging', icon: 'messageEdit' },
+  { id: 'valueprop', label: 'Value Prop', icon: 'diamond' },
+  { id: 'meeting', label: 'Meetings', icon: 'calendar' },
+  { id: 'salesnav', label: 'Sales Nav', icon: 'compass' },
+  { id: 'risk', label: 'Risk', icon: 'shield' },
+  { id: 'flow', label: 'Conversation', icon: 'mail' },
+  { id: 'followup', label: 'Follow-ups', icon: 'clock' },
+  { id: 'exec', label: 'Execution', icon: 'rocket' },
+];
+
+// ─── Strategy Components ──────────────────────────────────────────────────────
+function SectionCard({ T, title, children, style = {} }) {
+  return (
+    <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 10, ...style }}>
+      {title && (
+        <div style={{
+          fontSize: 10, fontWeight: 500, color: T.textMuted,
+          textTransform: 'uppercase', letterSpacing: '0.5px',
+          marginBottom: 12, paddingBottom: 8,
+          borderBottom: `1px solid ${T.border}`,
+        }}>{title}</div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function DataRow({ T, label, children }) {
+  return (
+    <div style={{ display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, minWidth: 120, paddingTop: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
+      <div style={{ flex: 1, fontSize: 13, color: T.text, lineHeight: 1.6 }}>{children}</div>
+    </div>
+  );
+}
+
+function BulletList({ T, items }) {
+  if (!items?.length) return null;
+  return (
+    <ul style={{ paddingLeft: 16, margin: 0 }}>
+      {items.map((item, i) => (
+        <li key={i} style={{ fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 5 }}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+// Tab: ICP
+function ICPTab({ T, strategy }) {
+  const r = strategy.icp_refinement || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Primary Segments">
+        {(r.primary_segments || []).map((seg, i) => (
+          <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: i < (r.primary_segments.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: T.text }}>{seg.segment}</div>
+              <ScoreBar T={T} score={seg.fit_score || 0} size={40} />
+            </div>
+            <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.6 }}>{seg.description}</div>
+          </div>
+        ))}
+      </SectionCard>
+      {r.secondary_segments?.length > 0 && (
+        <SectionCard T={T} title="Secondary Segments">
+          {r.secondary_segments.map((seg, i) => (
+            <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < r.secondary_segments.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 10 }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: T.text }}>{seg.segment}</span>
+                <ScoreBar T={T} score={seg.fit_score || 0} size={36} />
+              </div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>{seg.description}</div>
+            </div>
+          ))}
+        </SectionCard>
+      )}
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Narrowing Recommendations">
+          <BulletList T={T} items={r.narrowing_recommendations} />
+        </SectionCard>
+        <SectionCard T={T} title="Red Flags">
+          {(r.red_flags || []).map((f, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7, alignItems: 'flex-start' }}>
+              <Icon name="flag" size={13} color={T.danger} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{f}</span>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+// Tab: DM
+const SENIORITY_POLICIES = {
+  VP_PLUS_DEFAULT: 'VP+ Only (Default)',
+  VP_PLUS_ALLOW_DIRECTOR_HEAD_SMALL_CO: 'VP+ with Director/Head (Small Co)',
+  VP_PLUS_ALLOW_DIRECTOR_HEAD_FUNCTIONAL: 'VP+ with Director/Head (Functional)',
+  C_SUITE_ONLY: 'C-Suite Only',
+  DIRECTOR_PLUS: 'Director+',
+  ALL_LEVELS: 'All Levels',
+};
+
+function DMTab({ T, strategy, onChange }) {
+  const dm = strategy.decision_maker_targeting || {};
+  const bc = dm.buying_committee || {};
+  const [seniorityPolicy, setSeniorityPolicy] = useState(dm.seniority_policy || 'VP_PLUS_DEFAULT');
+
+  const updateSeniority = (val) => {
+    setSeniorityPolicy(val);
+    if (onChange) onChange({ ...strategy, decision_maker_targeting: { ...dm, seniority_policy: val } });
+  };
+
+  return (
+    <div>
+      <SectionCard T={T} title="Seniority Policy">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <Select T={T} value={seniorityPolicy} onChange={e => updateSeniority(e.target.value)}
+            options={Object.entries(SENIORITY_POLICIES).map(([v, l]) => ({ value: v, label: l }))} />
+          <Badge T={T} color="green">{SENIORITY_POLICIES[seniorityPolicy]}</Badge>
+        </div>
+      </SectionCard>
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Primary Titles">
+          {(dm.primary_titles || []).map((t, i) => (
+            <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < (dm.primary_titles.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.title}</div>
+              <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>{t.rationale}</div>
+            </div>
+          ))}
+        </SectionCard>
+        <SectionCard T={T} title="Secondary Titles">
+          {(dm.secondary_titles || []).map((t, i) => (
+            <div key={i} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: i < (dm.secondary_titles.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.title}</div>
+              <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>{t.rationale}</div>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Titles to Avoid">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(dm.avoid_titles || []).map((t, i) => (
+            <span key={i} style={{ padding: '2px 8px', borderRadius: 5, fontSize: 11, background: T.dangerBg, color: T.danger, fontWeight: 500 }}>{t}</span>
+          ))}
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Buying Committee">
+        <DataRow T={T} label="Who Cares">{bc.who_cares}</DataRow>
+        <DataRow T={T} label="Who Signs">{bc.who_signs}</DataRow>
+        <DataRow T={T} label="Who Influences">{bc.who_influences}</DataRow>
+        <DataRow T={T} label="Who Blocks">{bc.who_blocks}</DataRow>
+      </SectionCard>
+    </div>
+  );
+}
+
+// Tab: Channel
+function ChannelTab({ T, strategy }) {
+  const cs = strategy.channel_strategy || {};
+  const pacing = cs.pacing || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Primary Channel">
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.accentText, fontVariantNumeric: 'tabular-nums' }}>{cs.primary_channel}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Channel Breakdown">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr>
+                {['Channel', 'Usage', 'Daily Volume', 'Notes'].map(h => (
+                  <th key={h} style={{
+                    textAlign: 'left', padding: '6px 10px',
+                    fontSize: 10, fontWeight: 500, color: T.textMuted,
+                    textTransform: 'uppercase', letterSpacing: '0.5px',
+                    borderBottom: `1px solid ${T.border}`, background: T.bgElevated,
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(cs.channel_breakdown || []).map((row, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '9px 10px', fontWeight: 600, color: T.text, borderBottom: `1px solid ${T.border}` }}>{row.channel}</td>
+                  <td style={{ padding: '9px 10px', borderBottom: `1px solid ${T.border}` }}>
+                    <Badge T={T} color={row.usage === 'Primary' ? 'green' : 'orange'}>{row.usage}</Badge>
+                  </td>
+                  <td style={{ padding: '9px 10px', color: T.textMuted, borderBottom: `1px solid ${T.border}`, fontVariantNumeric: 'tabular-nums', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{row.daily_volume}</td>
+                  <td style={{ padding: '9px 10px', color: T.text, lineHeight: 1.5, borderBottom: `1px solid ${T.border}` }}>{row.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Pacing">
+          <DataRow T={T} label="Ramp Week 1">{pacing.ramp_week_1}</DataRow>
+          <DataRow T={T} label="Steady State">{pacing.steady_state}</DataRow>
+          <DataRow T={T} label="Multi-Sender">{pacing.multi_sender}</DataRow>
+        </SectionCard>
+        <SectionCard T={T} title="Warm vs Cold">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cs.warm_vs_cold}</div>
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+// Tab: Messaging
+function MessagingTab({ T, strategy }) {
+  const ma = strategy.messaging_angles || {};
+  const lw = ma.lead_with || {};
+  return (
+    <div>
+      {(ma.angles || []).map((angle, i) => (
+        <SectionCard key={i} T={T} style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 14, color: T.text }}>{angle.name}</div>
+            <ScoreBar T={T} score={angle.strength || 0} size={40} />
+          </div>
+          <DataRow T={T} label="Description">{angle.description}</DataRow>
+          <DataRow T={T} label="When to Use">{angle.when_to_use}</DataRow>
+          <DataRow T={T} label="Example Hook">
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontStyle: 'italic', flex: 1, lineHeight: 1.6 }}>{angle.example_hook}</span>
+              <CopyBtn T={T} text={angle.example_hook} />
+            </div>
+          </DataRow>
+        </SectionCard>
+      ))}
+      <SectionCard T={T} title="Lead-With Strategy">
+        <DataRow T={T} label="Insight">{lw.insight}</DataRow>
+        <DataRow T={T} label="Curiosity">{lw.curiosity}</DataRow>
+        <DataRow T={T} label="Credibility">{lw.credibility}</DataRow>
+      </SectionCard>
+      <SectionCard T={T} title="Never Say">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(ma.never_say || []).map((s, i) => (
+            <span key={i} style={{ padding: '2px 8px', borderRadius: 5, fontSize: 11, background: T.dangerBg, color: T.danger, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Icon name="x" size={10} color={T.danger} />{s}
+            </span>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+// Tab: Value Prop
+function ValuePropTab({ T, strategy }) {
+  const vp = strategy.value_prop_framing || {};
+  const oe = vp.outcome_emphasis || {};
+  const pp = vp.proof_point_strategy || {};
+  return (
+    <div>
+      <SectionCard T={T} title="First Touch Simplification">
+        <div style={{
+          fontSize: 13, lineHeight: 1.7, color: T.text, fontStyle: 'italic',
+          borderLeft: `3px solid ${T.accentText}`, paddingLeft: 12,
+        }}>"{vp.first_touch_simplification}"</div>
+      </SectionCard>
+      <SectionCard T={T} title="Outcome Emphasis">
+        <DataRow T={T} label="Primary">{oe.primary}</DataRow>
+        <DataRow T={T} label="Secondary">{oe.secondary}</DataRow>
+        <DataRow T={T} label="Tertiary">{oe.tertiary}</DataRow>
+      </SectionCard>
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Hint in Outreach">
+          <BulletList T={T} items={pp.hint_in_outreach} />
+        </SectionCard>
+        <SectionCard T={T} title="Save for Calls">
+          <BulletList T={T} items={pp.save_for_calls} />
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+// Tab: Meeting
+function MeetingTab({ T, strategy }) {
+  const mb = strategy.meeting_booking || {};
+  const cta = mb.cta_style || {};
+  return (
+    <div>
+      <SectionCard T={T} title="CTA Style">
+        <div style={{ marginBottom: 10 }}>
+          <Badge T={T} color="green">{cta.recommended}</Badge>
+        </div>
+        <DataRow T={T} label="Description">{cta.description}</DataRow>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Examples</div>
+          {(cta.examples || []).map((ex, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+              padding: '9px 12px', background: T.bgInput, borderRadius: 7, marginBottom: 7, gap: 10,
+              borderLeft: `3px solid ${T.accentMedium}`,
+            }}>
+              <span style={{ fontSize: 13, color: T.text, fontStyle: 'italic', flex: 1, lineHeight: 1.6 }}>"{ex}"</span>
+              <CopyBtn T={T} text={ex} />
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Calendar Link Timing">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{mb.calendar_link_timing}</div>
+      </SectionCard>
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Friction Reduction">
+          <BulletList T={T} items={mb.friction_reduction} />
+        </SectionCard>
+        <SectionCard T={T} title="No-Show Prevention">
+          <BulletList T={T} items={mb.no_show_prevention} />
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+// Tab: Sales Nav
+function SalesNavTab({ T, strategy }) {
+  const sn = strategy.sales_nav || {};
+  const rf = sn.recommended_filters || {};
+  const tp = sn.title_patterns || {};
+
+  const exportCSV = () => {
+    const clusters = strategy.targeting?.title_clusters || [];
+    let csv = 'Cluster,Title,Notes\n';
+    clusters.forEach(c => {
+      (c.titles || []).forEach(t => { csv += `"${c.cluster}","${t}","${c.notes}"\n`; });
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'ridge_title_clusters.csv'; a.click();
+  };
+
+  return (
+    <div>
+      <SectionCard T={T} title="Recommended Filters">
+        <DataRow T={T} label="Geography">{(rf.geography || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Company Size">{rf.company_size ? `${rf.company_size.min}–${rf.company_size.max} employees` : '—'}</DataRow>
+        <DataRow T={T} label="Industries">{(rf.industries || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Seniority">{(rf.seniority || []).join(', ')}</DataRow>
+        <DataRow T={T} label="Exclude Industries">{(rf.exclude_industries || []).join(', ')}</DataRow>
+      </SectionCard>
+      <SectionCard T={T} title="Title Patterns">
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>High Performers</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {(tp.high_performers || []).map((t, i) => (
+              <span key={i} style={{ padding: '2px 8px', borderRadius: 5, fontSize: 11, background: T.successBg, color: T.success, fontWeight: 500 }}>{t}</span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 7 }}>Boolean Search String</div>
+          <div style={{ position: 'relative' }}>
+            <div style={{
+              background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 7,
+              padding: '8px 70px 8px 12px', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+              color: T.text, lineHeight: 1.6,
+            }}>
+              {tp.boolean_string}
+            </div>
+            <div style={{ position: 'absolute', top: 6, right: 6 }}>
+              <CopyBtn T={T} text={tp.boolean_string || ''} />
+            </div>
+          </div>
+        </div>
+      </SectionCard>
+      <SectionCard T={T} title="Profile Red Flags">
+        {(sn.profile_red_flags || []).map((f, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7, alignItems: 'flex-start' }}>
+            <Icon name="flag" size={13} color={T.danger} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{f}</span>
+          </div>
+        ))}
+      </SectionCard>
+      <Btn T={T} variant="outline" small onClick={exportCSV}>
+        <Icon name="download" size={13} /> Export Title Clusters CSV
+      </Btn>
+    </div>
+  );
+}
+
+// Tab: Risk
+function RiskTab({ T, strategy }) {
+  const cr = strategy.campaign_risks || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Likely Objections">
+        {(cr.likely_objections || []).map((o, i) => (
+          <div key={i} style={{
+            marginBottom: 12, padding: '10px 12px',
+            background: T.bgInput, borderRadius: 7,
+            borderLeft: `3px solid ${T.border}`,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 5, display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+              <Icon name="quote" size={13} color={T.textMuted} style={{ flexShrink: 0, marginTop: 1 }} />
+              {o.objection}
+            </div>
+            <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.6, paddingLeft: 20 }}>
+              <strong style={{ color: T.accentText, fontWeight: 600 }}>Response: </strong>{o.response_angle}
+            </div>
+          </div>
+        ))}
+      </SectionCard>
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="Success Signals">
+          {(cr.success_signals || []).map((s, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7, alignItems: 'flex-start' }}>
+              <Icon name="check" size={13} color={T.success} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{s}</span>
+            </div>
+          ))}
+        </SectionCard>
+        <SectionCard T={T} title="Failure Signals">
+          {(cr.failure_signals || []).map((s, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7, alignItems: 'flex-start' }}>
+              <Icon name="x" size={13} color={T.danger} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{s}</span>
+            </div>
+          ))}
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Week 1-2 Adjustments">
+        <BulletList T={T} items={cr.week_1_2_adjustments} />
+      </SectionCard>
+    </div>
+  );
+}
+
+// Tab: Conversation Flow — Chat Bubble Style
+function FlowTab({ T, strategy }) {
+  const cf = strategy.conversation_flow || {};
+  const msgs = [cf.message_1, cf.message_2, cf.message_3].filter(Boolean);
+  return (
+    <div>
+      <SectionCard T={T} title="Connect Note">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{
+            flex: 1, fontSize: 13, color: T.text, lineHeight: 1.7, fontStyle: 'italic',
+            borderLeft: `3px solid ${T.accentText}`, paddingLeft: 12,
+          }}>"{cf.connect_note}"</div>
+          <CopyBtn T={T} text={cf.connect_note || ''} />
+        </div>
+      </SectionCard>
+
+      {msgs.map((msg, i) => {
+        const qs = msg.quality_score || 0;
+        return (
+          <div key={i} style={{ marginBottom: 16, position: 'relative' }}>
+            <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+              {msg.label}
+            </div>
+            <div style={{ marginBottom: 4 }}>
+              <ScoreBar T={T} score={qs} />
+            </div>
+            <div style={{
+              background: '#1A1E24', borderRadius: '8px 8px 8px 2px',
+              border: `1px solid ${T.border}`, padding: 14,
+              position: 'relative',
+            }}>
+              <div style={{ position: 'absolute', top: 10, right: 10 }}>
+                <CopyBtn T={T} text={msg.text || ''} />
+              </div>
+              <div style={{
+                fontSize: 13, color: T.text, lineHeight: 1.8,
+                whiteSpace: 'pre-wrap', fontFamily: "'DM Sans', sans-serif",
+                paddingRight: 60,
+              }}>
+                {msg.text}
+              </div>
+              {msg.quality_notes && (
+                <div style={{ fontSize: 11, color: T.textMuted, fontStyle: 'italic', marginTop: 10, lineHeight: 1.5 }}>
+                  {msg.quality_notes}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <SectionCard T={T} title="CTA Rules">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cf.cta_rules}</div>
+        </SectionCard>
+        <SectionCard T={T} title="Tone Rules">
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{cf.tone_rules}</div>
+        </SectionCard>
+      </div>
+      <SectionCard T={T} title="Strict Avoid List">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(cf.strict_avoid || []).map((s, i) => (
+            <span key={i} style={{ padding: '2px 8px', borderRadius: 5, fontSize: 11, background: T.dangerBg, color: T.danger, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Icon name="x" size={10} color={T.danger} />{s}
+            </span>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+// Tab: Follow-ups
+function FollowupTab({ T, strategy }) {
+  const fu = strategy.follow_up || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Cadence">
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.accentText, fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums' }}>{fu.cadence}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Philosophy">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{fu.philosophy}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Themed Touches">
+        {(fu.themes || []).map((t, i) => (
+          <div key={i} style={{ display: 'flex', gap: 14, marginBottom: 14, paddingBottom: 14, borderBottom: i < (fu.themes.length - 1) ? `1px solid ${T.border}` : 'none' }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: 6,
+              background: T.accentSurface, border: `1px solid ${T.accentBorder}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 700, fontSize: 12, color: T.accentText, flexShrink: 0,
+              fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums',
+            }}>{t.touch}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 3 }}>{t.theme}</div>
+              <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>{t.angle}</div>
+            </div>
+          </div>
+        ))}
+      </SectionCard>
+    </div>
+  );
+}
+
+// Tab: Execution
+function ExecTab({ T, strategy }) {
+  const en = strategy.ridge_execution_notes || {};
+  return (
+    <div>
+      <SectionCard T={T} title="Personalization">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.personalization}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Message Philosophy">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.message_philosophy}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Quality Benchmark">
+        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{en.quality_benchmark}</div>
+      </SectionCard>
+      <SectionCard T={T} title="Risks">
+        {(en.risks || []).map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7, alignItems: 'flex-start' }}>
+            <Icon name="alertTriangle" size={13} color={T.warning} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{r}</span>
+          </div>
+        ))}
+      </SectionCard>
+      <SectionCard T={T} title="Next Steps">
+        <ol style={{ paddingLeft: 18, margin: 0 }}>
+          {(en.next_steps || []).map((s, i) => (
+            <li key={i} style={{ fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 6 }}>{s}</li>
+          ))}
+        </ol>
+      </SectionCard>
+    </div>
+  );
+}
+
+// ─── Strategy View — Vertical Tabs ────────────────────────────────────────────
+function StrategyView({ T, strategy, workspaceId }) {
+  const [activeTab, setActiveTab] = useState('icp');
+  const [strat, setStrat] = useState(strategy);
+  const [saveState, setSaveState] = useState('saved');
+  const saveTimer = useRef(null);
+
+  const updateStrategy = (newStrat) => {
+    setStrat(newStrat);
+    setSaveState('unsaved');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      setSaveState('saving');
+      apiFetch('/strategy', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId, data: newStrat }) })
+        .then(() => { setSaveState('saved'); showToast('Strategy saved'); });
+    }, 800);
+  };
+
+  const renderTab = () => {
+    const props = { T, strategy: strat, onChange: updateStrategy };
+    switch (activeTab) {
+      case 'icp': return <ICPTab {...props} />;
+      case 'dm': return <DMTab {...props} />;
+      case 'channel': return <ChannelTab {...props} />;
+      case 'messaging': return <MessagingTab {...props} />;
+      case 'valueprop': return <ValuePropTab {...props} />;
+      case 'meeting': return <MeetingTab {...props} />;
+      case 'salesnav': return <SalesNavTab {...props} />;
+      case 'risk': return <RiskTab {...props} />;
+      case 'flow': return <FlowTab {...props} />;
+      case 'followup': return <FollowupTab {...props} />;
+      case 'exec': return <ExecTab {...props} />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div>
+      {/* Strategy banner */}
+      <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 14, marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Generated Strategy</div>
+            <div style={{ fontSize: 17, fontWeight: 600, color: T.text, letterSpacing: '-0.3px', marginBottom: 4 }}>{strat.client_name || 'Strategy'}</div>
+            {strat.offer_summary && <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.6, maxWidth: 560 }}>{strat.offer_summary}</div>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: T.textMuted, display: 'flex', alignItems: 'center', gap: 5 }}>
+              {saveState === 'saving' ? (
+                <><Icon name="loader" size={11} style={{ animation: 'spin 1s linear infinite' }} color={T.textMuted} /> Saving</>
+              ) : saveState === 'unsaved' ? (
+                <><span style={{ width: 6, height: 6, borderRadius: 3, background: T.warning, display: 'inline-block' }} /> Unsaved</>
+              ) : (
+                <><Icon name="check" size={11} color={T.success} /> Saved</>
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Vertical tab layout */}
+      <div className="strategy-layout" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+        {/* Vertical tab list */}
+        <div className="strategy-tabs-vert" style={{
+          width: 180, flexShrink: 0, borderRight: `1px solid ${T.border}`,
+          background: T.bgCard, borderRadius: '8px 0 0 8px',
+          paddingTop: 6, paddingBottom: 6,
+          border: `1px solid ${T.border}`,
+          borderRight: 'none',
+          alignSelf: 'flex-start',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          {STRATEGY_TABS.map(tab => {
+            const active = activeTab === tab.id;
+            return (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                className="strategy-tab-btn"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 7,
+                  height: 32, padding: '0 12px',
+                  background: active ? T.accentSurface : 'transparent',
+                  borderLeft: active ? `2px solid ${T.accentText}` : '2px solid transparent',
+                  borderRight: 'none', borderTop: 'none', borderBottom: 'none',
+                  color: active ? T.text : T.textSecondary,
+                  cursor: 'pointer', fontSize: 11, fontWeight: active ? 600 : 400,
+                  transition: 'all 150ms ease', whiteSpace: 'nowrap',
+                  fontFamily: 'inherit', textAlign: 'left',
+                }}>
+                <Icon name={tab.icon} size={13} color={active ? T.accentText : T.textMuted} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Tab content */}
+        <div style={{
+          flex: 1, minWidth: 0,
+          border: `1px solid ${T.border}`,
+          borderLeft: 'none',
+          borderRadius: '0 8px 8px 0',
+          background: T.bg,
+          padding: 14,
+          animation: 'fadeSlideIn 0.15s ease',
+        }}>
+          {renderTab()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Signal Type Config ─────────────────────────────────────────────────────
+const SIGNAL_TYPES = {
+  funding: { label: 'Funding', color: '#4B7BE5' },
+  hiring: { label: 'Hiring', color: '#1D8B4E' },
+  leadership_change: { label: 'Leadership', color: '#C08520' },
+  earnings: { label: 'Earnings', color: '#5B9E8A' },
+  competitor: { label: 'Competitor', color: '#CC3D3D' },
+  regulatory: { label: 'Regulatory', color: '#8B6EC2' },
+  product_launch: { label: 'Product Launch', color: '#4BA3C7' },
+  market_trend: { label: 'Market Trend', color: '#5C8A4E' },
+  expansion: { label: 'Expansion', color: '#2A5548' },
+  layoff: { label: 'Layoff', color: '#CC3D3D' },
+  acquisition: { label: 'Acquisition', color: '#C08520' },
+  partnership: { label: 'Partnership', color: '#4B7BE5' },
+  pain_signal: { label: 'Pain Signal', color: '#CC3D3D' },
+  tech_adoption: { label: 'Tech Adoption', color: '#4BA3C7' },
+  social_post: { label: 'Social', color: '#8B919A' },
+};
+
+const URGENCY_CONFIG = {
+  immediate: { label: 'IMMEDIATE', color: '#CC3D3D' },
+  this_week: { label: 'THIS WEEK', color: '#C08520' },
+  monitor: { label: 'MONITOR', color: '#5C8A4E' },
+};
+
+const TIME_FILTERS_INTEL = [
+  { id: 'live', label: 'Live' },
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: 'This Week' },
+  { id: 'month', label: 'This Month' },
+];
+
+const TYPE_FILTERS_INTEL = [
+  { id: 'all', label: 'All' },
+  { id: 'funding', label: 'Funding' },
+  { id: 'hiring', label: 'Hiring' },
+  { id: 'leadership_change', label: 'Leadership' },
+  { id: 'competitor', label: 'Competitor' },
+  { id: 'market_trend', label: 'Market' },
+  { id: 'regulatory', label: 'Regulatory' },
+  { id: 'social_post', label: 'Social' },
+];
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const now = new Date();
+  let d;
+  if (typeof dateStr === 'number') {
+    d = new Date(dateStr * 1000);
+  } else if (typeof dateStr === 'string' && (dateStr.includes('ago') || dateStr === 'today' || dateStr === 'yesterday')) {
+    return dateStr;
+  } else {
+    d = new Date(dateStr);
+  }
+  if (isNaN(d.getTime())) return dateStr;
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+  if (diff < 172800) return 'Yesterday';
+  return `${Math.floor(diff / 86400)} days ago`;
+}
+
+// ─── Market Pulse Widget ───────────────────────────────────────────────────
+function MarketPulse({ T }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const cacheRef = useRef({ data: null, fetchedAt: 0 });
+
+  const fetchPulse = async () => {
+    const now = Date.now();
+    if (cacheRef.current.data && (now - cacheRef.current.fetchedAt) < 15 * 60 * 1000) {
+      setData(cacheRef.current.data);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'market_pulse' }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const cleaned = result.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+        const firstBrace = cleaned.indexOf('{');
+        const lastBrace = cleaned.lastIndexOf('}');
+        if (firstBrace !== -1) {
+          const parsed = JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+          setData(parsed);
+          cacheRef.current = { data: parsed, fetchedAt: now };
+        }
+      }
+    } catch (e) {
+      console.error('Market pulse error:', e);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchPulse(); }, []);
+
+  const mkChange = (pct) => {
+    if (!pct) return null;
+    const num = parseFloat(String(pct).replace(/[^0-9.\-]/g, ''));
+    const isPos = num >= 0;
+    return (
+      <span className="mono" style={{ color: isPos ? T.success : T.danger, fontSize: 11, fontWeight: 500 }}>
+        {isPos ? '+' : ''}{pct}{typeof pct === 'number' ? '%' : (String(pct).includes('%') ? '' : '%')}
+      </span>
+    );
+  };
+
+  if (collapsed) {
+    return (
+      <button onClick={() => setCollapsed(false)} style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
+        background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 6,
+        color: T.textMuted, fontSize: 11, cursor: 'pointer', marginBottom: 10,
+      }}>
+        <Icon name="activity" size={12} color={T.textMuted} />
+        <span>Market Pulse</span>
+        <Icon name="chevronDown" size={10} color={T.textMuted} />
+      </button>
+    );
+  }
+
+  return (
+    <div style={{
+      background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8,
+      padding: '8px 14px', marginBottom: 10, display: 'flex', alignItems: 'center',
+      gap: 16, flexWrap: 'wrap', fontSize: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Icon name="activity" size={13} color={T.accentText} />
+        <span style={{ fontSize: 10, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Market Pulse</span>
+      </div>
+      {loading && !data && <span style={{ color: T.textMuted, fontSize: 11 }}>Loading...</span>}
+      {data && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: T.textSecondary }}>S&P 500:</span>
+            <span className="mono tabular data-shimmer" style={{ color: T.text, fontWeight: 500 }}>{data.sp500 && data.sp500.price}</span>
+            {mkChange(data.sp500 && data.sp500.change_pct)}
+          </div>
+          <span style={{ color: T.textFaint }}>|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: T.textSecondary }}>NASDAQ:</span>
+            <span className="mono tabular data-shimmer" style={{ color: T.text, fontWeight: 500 }}>{data.nasdaq && data.nasdaq.price}</span>
+            {mkChange(data.nasdaq && data.nasdaq.change_pct)}
+          </div>
+          <span style={{ color: T.textFaint }}>|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: T.textSecondary }}>10Y:</span>
+            <span className="mono tabular" style={{ color: T.text, fontWeight: 500 }}>{data.ten_year_yield}</span>
+          </div>
+          <span style={{ color: T.textFaint }}>|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: T.textSecondary }}>VIX:</span>
+            <span className="mono tabular" style={{ color: T.text, fontWeight: 500 }}>{data.vix}</span>
+          </div>
+        </>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+        <button onClick={fetchPulse} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+          <Icon name="refreshCw" size={11} color={T.textMuted} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
+        </button>
+        <button onClick={() => setCollapsed(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+          <Icon name="x" size={11} color={T.textMuted} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Signal Card ──────────────────────────────────────────────────────────────────────
+function SignalCard({ T, signal, onDraft, onDismiss, draft, draftLoading }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showDraft, setShowDraft] = useState(!!draft);
+  const urgency = URGENCY_CONFIG[signal.urgency] || URGENCY_CONFIG.monitor;
+  const sigType = SIGNAL_TYPES[signal.signal_type] || { label: signal.signal_type, color: '#8B919A' };
+
+  useEffect(() => { if (draft) setShowDraft(true); }, [draft]);
+
+  return (
+    <div className="fade-slide-in" style={{
+      background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8,
+      padding: 14, marginBottom: 8,
+      borderLeft: `3px solid ${urgency.color}`,
+      transition: 'border-color 150ms ease',
+    }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: urgency.color, flexShrink: 0, animation: signal.urgency === 'immediate' ? 'pulseRing 2s ease infinite' : 'none' }} />
+        <span style={{ fontSize: 10, fontWeight: 600, color: urgency.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{urgency.label}</span>
+        <span style={{ fontSize: 11, color: T.textMuted }}>{timeAgo(signal.date)}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span className="mono tabular" style={{ fontSize: 11, color: T.accentText, fontWeight: 500 }}>{signal.relevance_score}/100</span>
+        </div>
+      </div>
+
+      {/* Headline */}
+      <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6, lineHeight: 1.4 }}>
+        {signal.headline}
+        {signal.url && (
+          <a href={signal.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6, display: 'inline-flex', verticalAlign: 'middle' }}>
+            <Icon name="externalLink" size={12} color={T.textMuted} />
+          </a>
+        )}
+      </div>
+
+      {/* Source + type */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: T.textMuted }}>Source: {signal.source}</span>
+        <span style={{
+          fontSize: 10, fontWeight: 500, color: sigType.color,
+          background: `${sigType.color}18`, padding: '2px 8px', borderRadius: 4,
+          textTransform: 'uppercase', letterSpacing: '0.3px',
+        }}>{sigType.label}</span>
+      </div>
+
+      {/* AI Summary */}
+      <div style={{ fontSize: 12, color: T.textSecondary, lineHeight: 1.6, fontStyle: 'italic',
+        borderLeft: `2px solid ${T.accentText}`, paddingLeft: 10, marginBottom: 10 }}>
+        "{signal.summary}"
+      </div>
+
+      {/* Companies mentioned */}
+      {signal.companies_mentioned && signal.companies_mentioned.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
+          {signal.companies_mentioned.map((c, i) => (
+            <span key={i} style={{
+              fontSize: 10, color: T.textMuted, background: T.bgInput,
+              padding: '2px 7px', borderRadius: 3, border: `1px solid ${T.border}`,
+            }}>{c}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <Btn T={T} small onClick={() => { if (!draft) onDraft(signal); setShowDraft(true); }}
+          disabled={draftLoading}>
+          <Icon name="send" size={11} /> {draftLoading ? 'Drafting...' : 'Draft Outreach'}
+        </Btn>
+        <Btn T={T} variant="outline" small onClick={() => setExpanded(!expanded)}>
+          <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={11} /> {expanded ? 'Collapse' : 'Expand'}
+        </Btn>
+        <Btn T={T} variant="outline" small onClick={() => onDismiss(signal)}>
+          <Icon name="x" size={11} /> Dismiss
+        </Btn>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, fontSize: 12, color: T.textSecondary, lineHeight: 1.6 }}>
+          <div style={{ marginBottom: 4 }}><strong style={{ color: T.text }}>Type:</strong> {sigType.label}</div>
+          <div style={{ marginBottom: 4 }}><strong style={{ color: T.text }}>Urgency:</strong> {urgency.label}</div>
+          <div style={{ marginBottom: 4 }}><strong style={{ color: T.text }}>Relevance:</strong> <span className="mono">{signal.relevance_score}/100</span></div>
+          {signal.url && <div><strong style={{ color: T.text }}>URL:</strong> <a href={signal.url} target="_blank" rel="noopener noreferrer" style={{ color: T.accentText }}>{signal.url}</a></div>}
+        </div>
+      )}
+
+      {/* Draft Outreach panel */}
+      {showDraft && draft && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: T.accentText, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+            Draft Outreach
+          </div>
+          {[
+            { label: 'Connection Note', value: draft.connection_note },
+            { label: 'LinkedIn Message', value: draft.linkedin_message },
+            { label: 'Email Subject', value: draft.email_subject },
+            { label: 'Email Body', value: draft.email_body },
+          ].map((item, i) => item.value && (
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.3px' }}>{item.label}</span>
+                <CopyBtn T={T} text={item.value} />
+              </div>
+              <div style={{
+                background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 6,
+                padding: '8px 12px', fontSize: 12, color: T.text, lineHeight: 1.6, whiteSpace: 'pre-wrap',
+              }}>{item.value}</div>
+            </div>
+          ))}
+          {draft.suggested_target_title && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+              <Icon name="target" size={12} color={T.accentText} />
+              <span style={{ color: T.textMuted }}>Target:</span>
+              <span style={{ color: T.text, fontWeight: 500 }}>{draft.suggested_target_title}</span>
+            </div>
+          )}
+          {draft.timing_note && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11, marginTop: 4 }}>
+              <Icon name="clock" size={12} color={T.accentText} />
+              <span style={{ color: T.textMuted }}>Timing:</span>
+              <span style={{ color: T.text }}>{draft.timing_note}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Intelligence Feed ───────────────────────────────────────────────────────────────
+function IntelligenceFeed({ T, workspaceId, intake, strategy }) {
+  const [signals, setSignals] = useState([]);
+  const [dismissed, setDismissed] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [draftLoading, setDraftLoading] = useState({});
+  const [lastScanAt, setLastScanAt] = useState(0);
+  const [scanCount, setScanCount] = useState(0);
+  const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState({ current: 0, total: 0, query: '' });
+  const [typeFilters, setTypeFilters] = useState(['all']);
+  const [timeFilter, setTimeFilter] = useState('live');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`/intelligence?workspace_id=${workspaceId}`).then(data => {
+      if (data.signals) setSignals(data.signals);
+      if (data.dismissed) setDismissed(data.dismissed);
+      if (data.drafts) setDrafts(data.drafts);
+      if (data.last_scan_at) setLastScanAt(data.last_scan_at);
+      if (data.scan_count) setScanCount(data.scan_count);
+      setLoaded(true);
+    });
+  }, [workspaceId]);
+
+  const saveData = (sigs, dis, dra, scanAt, count) => {
+    apiFetch('/intelligence', {
+      method: 'POST',
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        signals: sigs,
+        dismissed: dis,
+        drafts: dra,
+        last_scan_at: scanAt,
+        scan_count: count,
+      }),
+    });
+  };
+
+  const buildQueries = () => {
+    const industry = intake && intake.company && intake.company.industry ? intake.company.industry : '';
+    const geo = intake && intake.icp && intake.icp.geographies ? intake.icp.geographies : 'US';
+    const companyName = intake && intake.company && intake.company.name ? intake.company.name : '';
+    const titleClusters = strategy && strategy.targeting && strategy.targeting.title_clusters ? strategy.targeting.title_clusters : [];
+    const titles = titleClusters.length > 0 ? titleClusters.map(c => c.titles).flat() : ['VP of Sales'];
+
+    const queries = [];
+    if (industry) {
+      queries.push(`${industry} funding round 2025 2026`);
+      queries.push(`${industry} VP Sales CRO new hire leadership change`);
+      queries.push(`${industry} hiring SDR sales team expansion`);
+      queries.push(`${industry} acquisition merger partnership`);
+      queries.push(`${industry} layoffs restructuring`);
+      queries.push(`${industry} new product launch SaaS platform`);
+      queries.push(`${industry} regulation compliance changes 2026`);
+      queries.push(`${industry} ${geo} market growth revenue`);
+    }
+    if (companyName) {
+      queries.push(`${companyName} competitors news recent`);
+    }
+    if (industry && titles[0]) {
+      queries.push(`${industry} ${titles[0]} linkedin post`);
+    }
+    return queries.length > 0 ? queries : ['B2B SaaS sales intelligence news 2026'];
+  };
+
+  const buildContext = () => {
+    const companyName = intake && intake.company ? intake.company.name : 'Unknown';
+    const industry = intake && intake.company ? intake.company.industry : 'Unknown';
+    const icpDesc = intake && intake.icp ? intake.icp.description : 'B2B companies';
+    const offerDesc = intake && intake.offer ? intake.offer.description : 'B2B service';
+    const titleClusters = strategy && strategy.targeting && strategy.targeting.title_clusters ? strategy.targeting.title_clusters : [];
+    const targetTitles = titleClusters.length > 0 ? titleClusters.map(c => c.titles).flat().slice(0, 5).join(', ') : 'VP, Director, C-Suite';
+    const geo = intake && intake.icp ? intake.icp.geographies : 'US';
+    return `Client context for relevance scoring:\n- Company: ${companyName}\n- Industry: ${industry}\n- ICP: ${icpDesc}\n- Offer: ${offerDesc}\n- Target titles: ${targetTitles}\n- Geographies: ${geo}\n\nFind signals relevant to selling to this client's target market.`;
+  };
+
+  const runScan = async () => {
+    setScanning(true);
+    const queries = buildQueries();
+    const context = buildContext();
+    const allSignals = [];
+    setScanProgress({ current: 0, total: queries.length, query: '' });
+
+    for (let i = 0; i < queries.length; i += 3) {
+      const batch = queries.slice(i, i + 3);
+      setScanProgress({ current: i, total: queries.length, query: batch[0] });
+      const results = await Promise.all(
+        batch.map(async (q) => {
+          try {
+            const res = await fetch(AI_API, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'scan_intelligence', query: q, context }),
+            });
+            const result = await res.json();
+            if (result.ok && result.text) {
+              const cleaned = result.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+              const first = cleaned.indexOf('[');
+              const last = cleaned.lastIndexOf(']');
+              if (first !== -1) return JSON.parse(cleaned.substring(first, last + 1));
+            }
+          } catch (e) { console.error('Scan error:', q, e); }
+          return [];
+        })
+      );
+      allSignals.push(...results.flat());
+    }
+
+    setScanProgress({ current: queries.length, total: queries.length, query: 'Processing results...' });
+
+    const seen = new Set();
+    const unique = allSignals.filter(s => {
+      if (!s || !s.headline) return false;
+      const key = s.headline.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    unique.forEach((s, i) => { if (!s.id) s.id = `sig_${Date.now()}_${i}`; });
+    unique.sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
+
+    const existingIds = new Set(signals.map(s => s.headline ? s.headline.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50) : ''));
+    const newOnly = unique.filter(s => !existingIds.has(s.headline ? s.headline.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50) : ''));
+    const merged = [...newOnly, ...signals];
+    const newScanAt = Date.now() / 1000;
+    const newCount = scanCount + 1;
+
+    setSignals(merged); setLastScanAt(newScanAt); setScanCount(newCount); setScanning(false);
+    saveData(merged, dismissed, drafts, newScanAt, newCount);
+    if (newOnly.length > 0) showToast(`Found ${newOnly.length} new signals`);
+    else showToast('Scan complete — no new signals found');
+  };
+
+  const handleDraft = async (signal) => {
+    const sigId = signal.id || signal.headline;
+    setDraftLoading(prev => ({ ...prev, [sigId]: true }));
+    try {
+      const offerDesc = intake && intake.offer ? intake.offer.description : '';
+      const valueProp = intake && intake.value_props ? intake.value_props.primary : '';
+      const angleNames = strategy && strategy.messaging_angles && strategy.messaging_angles.angles && strategy.messaging_angles.angles.length > 0 ? strategy.messaging_angles.angles[0].name : 'Observation-led';
+      const toneRules = strategy && strategy.conversation_flow ? strategy.conversation_flow.tone_rules : 'Professional, observational';
+      const signalData = `SIGNAL: ${signal.headline}\nDETAILS: ${signal.summary}\nCOMPANIES: ${(signal.companies_mentioned || []).join(', ')}\nSIGNAL TYPE: ${signal.signal_type}`;
+      const contextData = `- Offer: ${offerDesc}\n- Value prop: ${valueProp}\n- Best messaging angle: ${angleNames}\n- Tone: ${toneRules}`;
+      const res = await fetch(AI_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'draft_outreach', signal: signalData, context: contextData }),
+      });
+      const result = await res.json();
+      if (result.ok && result.text) {
+        const cleaned = result.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+        const firstBrace = cleaned.indexOf('{');
+        const lastBrace = cleaned.lastIndexOf('}');
+        if (firstBrace !== -1) {
+          const parsed = JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+          const newDrafts = { ...drafts, [sigId]: parsed };
+          setDrafts(newDrafts);
+          saveData(signals, dismissed, newDrafts, lastScanAt, scanCount);
+          showToast('Outreach draft generated');
+        }
+      }
+    } catch (e) { console.error('Draft error:', e); showToast('Failed to generate draft'); }
+    setDraftLoading(prev => ({ ...prev, [sigId]: false }));
+  };
+
+  const handleDismiss = (signal) => {
+    const sigId = signal.id || signal.headline;
+    const newDismissed = [...dismissed, sigId];
+    setDismissed(newDismissed);
+    saveData(signals, newDismissed, drafts, lastScanAt, scanCount);
+  };
+
+  const filteredSignals = useMemo(() => {
+    return signals.filter(s => {
+      const sigId = s.id || s.headline;
+      if (dismissed.includes(sigId)) return false;
+      if (!typeFilters.includes('all') && !typeFilters.includes(s.signal_type)) return false;
+      return true;
+    });
+  }, [signals, dismissed, typeFilters, timeFilter]);
+
+  const stats = useMemo(() => {
+    const active = signals.filter(s => !dismissed.includes(s.id || s.headline));
+    return {
+      total: active.length,
+      highPriority: active.filter(s => s.urgency === 'immediate').length,
+      accounts: new Set(active.flatMap(s => s.companies_mentioned || [])).size,
+      draftsCreated: Object.keys(drafts).length,
+    };
+  }, [signals, dismissed, drafts]);
+
+  const toggleTypeFilter = (id) => {
+    if (id === 'all') {
+      setTypeFilters(['all']);
+    } else {
+      setTypeFilters(prev => {
+        const without = prev.filter(f => f !== 'all');
+        if (without.includes(id)) {
+          const next = without.filter(f => f !== id);
+          return next.length === 0 ? ['all'] : next;
+        }
+        return [...without, id];
+      });
+    }
+  };
+
+  return (
+    <div>
+      <MarketPulse T={T} />
+      <div style={{
+        background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8,
+        padding: '10px 14px', marginBottom: 10, display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center',
+      }}>
+        {[
+          { label: 'SIGNALS', value: stats.total, icon: 'radar' },
+          { label: 'HIGH PRIORITY', value: stats.highPriority, icon: 'zap', color: stats.highPriority > 0 ? T.danger : undefined },
+          { label: 'ACCOUNTS', value: stats.accounts, icon: 'target' },
+          { label: 'DRAFTS', value: stats.draftsCreated, icon: 'send' },
+        ].map((stat, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Icon name={stat.icon} size={13} color={stat.color || T.textMuted} />
+            <span style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}:</span>
+            <span className="mono tabular data-shimmer" style={{ fontSize: 13, fontWeight: 600, color: stat.color || T.text }}>{stat.value}</span>
+          </div>
+        ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {lastScanAt > 0 && (
+            <span style={{ fontSize: 10, color: T.textMuted }}>Last scan: {timeAgo(lastScanAt)}</span>
+          )}
+          <Btn T={T} small onClick={runScan} disabled={scanning}>
+            <Icon name="refreshCw" size={11} style={scanning ? { animation: 'spin 1s linear infinite' } : {}} />
+            {scanning ? 'Scanning...' : 'Scan Now'}
+          </Btn>
+        </div>
+      </div>
+
+      {scanning && (
+        <div style={{
+          background: T.accentSurface, border: `1px solid ${T.accentBorder}`, borderRadius: 8,
+          padding: '10px 14px', marginBottom: 10,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, color: T.accentText, fontWeight: 500 }}>
+              Scanning queries... {scanProgress.current}/{scanProgress.total}
+            </span>
+            <span className="mono" style={{ fontSize: 11, color: T.textMuted }}>
+              {Math.round((scanProgress.current / Math.max(scanProgress.total, 1)) * 100)}%
+            </span>
+          </div>
+          <div style={{ height: 3, background: T.bgInput, borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', background: T.accentText, borderRadius: 2,
+              width: `${(scanProgress.current / Math.max(scanProgress.total, 1)) * 100}%`,
+              transition: 'width 300ms ease',
+            }} />
+          </div>
+          {scanProgress.query && (
+            <div style={{ fontSize: 10, color: T.textMuted, marginTop: 4, fontStyle: 'italic' }}>{scanProgress.query}</div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Icon name="filter" size={12} color={T.textMuted} style={{ marginRight: 2 }} />
+        {TYPE_FILTERS_INTEL.map(f => (
+          <button key={f.id} onClick={() => toggleTypeFilter(f.id)} style={{
+            fontSize: 11, padding: '3px 10px', borderRadius: 4,
+            background: typeFilters.includes(f.id) ? T.accentSurface : T.bgInput,
+            border: `1px solid ${typeFilters.includes(f.id) ? T.accentBorder : T.border}`,
+            color: typeFilters.includes(f.id) ? T.accentText : T.textMuted,
+            cursor: 'pointer', transition: 'all 150ms ease', fontFamily: 'inherit',
+          }}>{f.label}</button>
+        ))}
+        <span style={{ width: 1, height: 16, background: T.border, margin: '0 4px' }} />
+        {TIME_FILTERS_INTEL.map(f => (
+          <button key={f.id} onClick={() => setTimeFilter(f.id)} style={{
+            fontSize: 11, padding: '3px 10px', borderRadius: 4,
+            background: timeFilter === f.id ? T.accentSurface : T.bgInput,
+            border: `1px solid ${timeFilter === f.id ? T.accentBorder : T.border}`,
+            color: timeFilter === f.id ? T.accentText : T.textMuted,
+            cursor: 'pointer', transition: 'all 150ms ease', fontFamily: 'inherit',
+          }}>{f.label}</button>
+        ))}
+      </div>
+
+      {!loaded ? (
+        <div>
+          {[1,2,3].map(i => (
+            <div key={i} className="skeleton" style={{ height: 120, borderRadius: 8, marginBottom: 8 }} />
+          ))}
+        </div>
+      ) : filteredSignals.length === 0 ? (
+        <div style={{
+          background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8,
+          padding: 40, textAlign: 'center',
+        }}>
+          <Icon name="radar" size={32} color={T.textFaint} style={{ marginBottom: 12 }} />
+          <div style={{ fontSize: 14, fontWeight: 500, color: T.textSecondary, marginBottom: 6 }}>
+            {signals.length === 0 ? 'No signals yet' : 'No signals match filters'}
+          </div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
+            {signals.length === 0 ? 'Click "Scan Now" to search for buying signals, market news, and opportunities relevant to this client.' : 'Try adjusting your filters or run a new scan.'}
+          </div>
+          {signals.length === 0 && (
+            <Btn T={T} onClick={runScan} disabled={scanning}>
+              <Icon name="radar" size={12} /> {scanning ? 'Scanning...' : 'Run First Scan'}
+            </Btn>
+          )}
+        </div>
+      ) : (
+        filteredSignals.map((signal, i) => (
+          <SignalCard
+            key={signal.id || i}
+            T={T}
+            signal={signal}
+            onDraft={handleDraft}
+            onDismiss={handleDismiss}
+            draft={drafts[signal.id || signal.headline]}
+            draftLoading={draftLoading[signal.id || signal.headline]}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+// ─── Workspace Detail ─────────────────────────────────────────────────────────
+function WorkspaceDetail({ T, workspace, onBack, onDeleted, user, activeInnerTab, onInnerTabChange }) {
+  const [ws, setWs] = useState(workspace);
+  const [strategy, setStrategy] = useState(null);
+  const [stratLoaded, setStratLoaded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [currentIntake, setCurrentIntake] = useState(null);
+
+  useEffect(() => {
+    apiFetch(`/strategy?workspace_id=${ws.id}`).then(data => {
+      if (data && Object.keys(data).length > 0) setStrategy(data);
+      setStratLoaded(true);
+    });
+    apiFetch(`/intake?workspace_id=${ws.id}`).then(data => {
+      if (data && Object.keys(data).length > 0) setCurrentIntake(data);
+    });
+  }, [ws.id]);
+
+  const updateStatus = async (newStatus) => {
+    const updated = { ...ws, status: newStatus };
+    setWs(updated);
+    await apiFetch('/workspaces', { method: 'PUT', body: JSON.stringify({ id: ws.id, status: newStatus }) });
+  };
+
+  const deleteWorkspace = async () => {
+    await apiFetch(`/workspaces?id=${ws.id}`, { method: 'DELETE' });
+    onDeleted();
+  };
+
+  const activeTab = activeInnerTab || 'intake';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <HeaderBar T={T}
+        breadcrumbs={[
+          { label: 'Workspaces', onClick: onBack },
+          { label: ws.name },
+        ]}
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {(ws.website || ws.client_email) && (
+              <div style={{ display: 'flex', gap: 10, fontSize: 12, color: T.textMuted, alignItems: 'center' }}>
+                {ws.website && (
+                  <a href={ws.website} target="_blank" rel="noopener" style={{ color: T.accentText, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Icon name="globe" size={12} color={T.accentText} /> {ws.website}
+                  </a>
+                )}
+                {ws.client_email && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Icon name="mail" size={12} /> {ws.client_email}
+                  </span>
+                )}
+              </div>
+            )}
+            <Badge T={T} color={statusColor(ws.status)}>{statusLabel(ws.status)}</Badge>
+            <Select T={T} value={ws.status} onChange={e => updateStatus(e.target.value)} options={[
+              { value: 'active', label: 'Active' },
+              { value: 'strategy_complete', label: 'Strategy Complete' },
+              { value: 'pending_intake', label: 'Pending Intake' },
+              { value: 'paused', label: 'Paused' },
+              { value: 'archived', label: 'Archived' },
+            ]} style={{ height: 28, fontSize: 12 }} />
+            {!confirmDelete ? (
+              <Btn T={T} variant="danger" small onClick={() => setConfirmDelete(true)}>Delete</Btn>
+            ) : (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: T.danger }}>Confirm?</span>
+                <Btn T={T} variant="danger" small onClick={deleteWorkspace}>Yes</Btn>
+                <Btn T={T} variant="outline" small onClick={() => setConfirmDelete(false)}>Cancel</Btn>
+              </div>
+            )}
+          </div>
+        }
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        {activeTab === 'intake' && (
+          <IntakeForm T={T} workspaceId={ws.id} onIntakeChange={setCurrentIntake} />
+        )}
+
+        {activeTab === 'strategy' && (
+          <div>
+            <StrategyGenerator T={T} workspaceId={ws.id} intake={currentIntake} onStrategyGenerated={s => {
+              setStrategy(s);
+              updateStatus('strategy_complete');
+            }} />
+            {strategy && stratLoaded && (
+              <StrategyView T={T} strategy={strategy} workspaceId={ws.id} />
+            )}
+            {!strategy && stratLoaded && (
+              <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+                <Icon name="barChart" size={40} color={T.textMuted} style={{ display: 'block', margin: '0 auto 14px' }} />
+                <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6 }}>No strategy yet</div>
+                <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>Fill in the intake form and click "Run Strategy" above.</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'intelligence' && (
+          <IntelligenceFeed T={T} workspaceId={ws.id} intake={currentIntake} strategy={strategy} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Manage Accounts ──────────────────────────────────────────────────────────
+function ManageAccountsView({ T, currentUser, breadcrumbs, collapsed, onToggleSidebar }) {
+  const [users, setUsers] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('client');
+  const [newWsId, setNewWsId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [resetPwdUser, setResetPwdUser] = useState(null);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  const load = async () => {
+    const [u, w] = await Promise.all([apiFetch('/users'), apiFetch('/workspaces')]);
+    if (Array.isArray(u)) setUsers(u);
+    if (Array.isArray(w)) setWorkspaces(w);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const createUser = async () => {
+    if (!newEmail || !newPassword) return;
+    setCreating(true); setCreateError('');
+    const res = await apiFetch('/users', {
+      method: 'POST',
+      body: JSON.stringify({ email: newEmail, password: newPassword, name: newName, role: newRole, workspace_id: newWsId }),
+    });
+    setCreating(false);
+    if (res.error) { setCreateError(res.error); return; }
+    setNewEmail(''); setNewName(''); setNewPassword(''); setNewRole('client'); setNewWsId('');
+    load();
+  };
+
+  const deleteUser = async (uid) => {
+    await apiFetch(`/users?id=${uid}`, { method: 'DELETE' });
+    setConfirmDeleteUser(null); load();
+  };
+
+  const resetPassword = async () => {
+    if (!resetPwdUser || !newPwd) return;
+    await apiFetch('/users/password', { method: 'POST', body: JSON.stringify({ id: resetPwdUser.id, password: newPwd }) });
+    setResetPwdUser(null); setNewPwd('');
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <HeaderBar T={T} breadcrumbs={breadcrumbs} collapsed={collapsed} onToggleSidebar={onToggleSidebar} />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', maxWidth: 800 }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: 'center' }}>
+            <Icon name="loader" size={20} color={T.textMuted} style={{ animation: 'spin 1s linear infinite', display: 'block', margin: '0 auto 10px' }} />
+            <span style={{ color: T.textMuted, fontSize: 13 }}>Loading…</span>
+          </div>
+        ) : (
+          <>
+            {/* Create User */}
+            <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Create New Account</div>
+              <div className="two-col-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                <Input T={T} value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email *" type="email" />
+                <Input T={T} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Name" />
+                <Input T={T} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password *" type="password" />
+                <Select T={T} value={newRole} onChange={e => setNewRole(e.target.value)} options={[
+                  { value: 'client', label: 'Client' }, { value: 'ridge_admin', label: 'Ridge Admin' },
+                ]} style={{ width: '100%' }} />
+                {newRole === 'client' && (
+                  <Select T={T} value={newWsId} onChange={e => setNewWsId(e.target.value)} options={[
+                    { value: '', label: 'No workspace' },
+                    ...workspaces.map(w => ({ value: w.id, label: w.name })),
+                  ]} style={{ width: '100%' }} />
+                )}
+              </div>
+              {createError && <div style={{ fontSize: 12, color: T.danger, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}><Icon name="alertTriangle" size={12} color={T.danger} />{createError}</div>}
+              <Btn T={T} small onClick={createUser} disabled={creating || !newEmail || !newPassword}>
+                {creating ? 'Creating…' : <><Icon name="plus" size={12} /> Create Account</>}
+              </Btn>
+            </div>
+
+            {/* Users list */}
+            <div style={{ fontSize: 11, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+              All Accounts ({users.length})
+            </div>
+            <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden' }}>
+              {users.map((u, idx) => (
+                <div key={u.id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '11px 14px',
+                  borderBottom: idx < users.length - 1 ? `1px solid ${T.border}` : 'none',
+                  gap: 8, flexWrap: 'wrap',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name || u.email}</div>
+                    <div style={{ fontSize: 11, color: T.textMuted, display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      {u.email}
+                      <span style={{ color: T.textFaint }}>&middot;</span>
+                      <Badge T={T} color={u.role === 'ridge_admin' ? 'green' : 'orange'}>{u.role}</Badge>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    {resetPwdUser?.id === u.id ? (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <Input T={T} value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="New password" type="password" style={{ width: 130 }} />
+                        <Btn T={T} small onClick={resetPassword} disabled={!newPwd}>Save</Btn>
+                        <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(null)}><Icon name="x" size={12} /></Btn>
+                      </div>
+                    ) : (
+                      <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(u)}>Reset Password</Btn>
+                    )}
+                    {confirmDeleteUser === u.id ? (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Btn T={T} variant="danger" small onClick={() => deleteUser(u.id)}>Confirm</Btn>
+                        <Btn T={T} variant="outline" small onClick={() => setConfirmDeleteUser(null)}><Icon name="x" size={12} /></Btn>
+                      </div>
+                    ) : (
+                      u.id !== currentUser?.id && (
+                        <Btn T={T} variant="danger" small onClick={() => setConfirmDeleteUser(u.id)}>Delete</Btn>
+                      )
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Client Portal ────────────────────────────────────────────────────────────
+function ClientPortal({ T, user, workspaceId, activeNav, onNavChange }) {
+  const [ws, setWs] = useState(null);
+  const [strategy, setStrategy] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/workspaces').then(data => {
+      if (Array.isArray(data)) {
+        const found = data.find(w => w.id === workspaceId) || data[0];
+        setWs(found);
+      }
+    });
+    apiFetch(`/strategy?workspace_id=${workspaceId}`).then(data => {
+      if (data && Object.keys(data).length > 0) setStrategy(data);
+    });
+  }, [workspaceId]);
+
+  if (!ws) return (
+    <div style={{ padding: 40, textAlign: 'center' }}>
+      <Icon name="loader" size={20} color={T.textMuted} style={{ animation: 'spin 1s linear infinite', display: 'block', margin: '0 auto 12px' }} />
+      <span style={{ color: T.textMuted, fontSize: 13 }}>Loading workspace…</span>
+    </div>
+  );
+
+  const view = activeNav || 'overview';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <HeaderBar T={T} breadcrumbs={[{ label: ws.name }, { label: view.charAt(0).toUpperCase() + view.slice(1) }]} />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        {view === 'overview' && (
+          <div>
+            <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 20, marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: T.text, letterSpacing: '-0.3px', marginBottom: 4 }}>{ws.name}</div>
+                  {ws.website && <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Icon name="globe" size={12} color={T.textMuted} />{ws.website}
+                  </div>}
+                  <Badge T={T} color={statusColor(ws.status)}>{statusLabel(ws.status)}</Badge>
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <div style={{ textAlign: 'center', padding: '12px 18px', background: T.accentSurface, borderRadius: 7, border: `1px solid ${T.accentBorder}` }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: T.accentText, fontVariantNumeric: 'tabular-nums', fontFamily: "'JetBrains Mono', monospace" }}>{ws.intake_count || 0}</div>
+                    <div style={{ fontSize: 10, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Intake Saves</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: '12px 18px', background: T.accentSurface, borderRadius: 7, border: `1px solid ${T.accentBorder}` }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: T.accentText, fontVariantNumeric: 'tabular-nums', fontFamily: "'JetBrains Mono', monospace" }}>{ws.runs_count || 0}</div>
+                    <div style={{ fontSize: 10, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Strategy Runs</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {ws.notes && (
+              <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Notes</div>
+                <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{ws.notes}</div>
+              </div>
+            )}
+          </div>
+        )}
+        {view === 'intake' && <IntakeForm T={T} workspaceId={ws.id} />}
+        {view === 'strategy' && (
+          strategy ? (
+            <StrategyView T={T} strategy={strategy} workspaceId={ws.id} />
+          ) : (
+            <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+              <Icon name="clock" size={40} color={T.textMuted} style={{ display: 'block', margin: '0 auto 14px' }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6 }}>Strategy not yet generated</div>
+              <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>Your Ridge team will generate your strategy once the intake form is complete.</div>
+            </div>
+          )
+        )}
+        {view === 'intelligence' && (
+          <IntelligenceFeed T={T} workspaceId={ws.id} intake={null} strategy={strategy} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Status Bar ─────────────────────────────────────────────────────────────
+function StatusBar() {
+  const [time, setTime] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const fmt = (d) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+  const sep = (
+    <span style={{ width: 1, height: 12, background: 'rgba(255,255,255,0.06)', display: 'inline-block', margin: '0 8px', flexShrink: 0 }} />
+  );
+  return (
+    <div style={{
+      height: 24, background: '#0D0F12', borderTop: '1px solid rgba(255,255,255,0.04)',
+      display: 'flex', alignItems: 'center', padding: '0 12px',
+      flexShrink: 0, userSelect: 'none',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 1 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#27AE60', display: 'inline-block', marginRight: 5, flexShrink: 0 }} />
+        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono', monospace", color: '#27AE60', textTransform: 'uppercase', letterSpacing: '0.5px' }}>ONLINE</span>
+        {sep}
+        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono', monospace", color: '#5C6370' }}>v2.1.0</span>
+        {sep}
+        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono', monospace", color: '#5C6370' }}>{fmt(time)}</span>
+      </div>
+      <span style={{ fontSize: 9, color: '#5C6370', fontFamily: "'JetBrains Mono', monospace" }}>Ridge Strategy Engine</span>
+    </div>
+  );
+}
+
+// ─── Admin Dashboard ──────────────────────────────────────────────────────────
+function AdminDashboard({ T, user, onLogout, mode, toggle }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [activeNav, setActiveNav] = useState('workspaces');
+  const [selectedWs, setSelectedWs] = useState(null);
+  const [innerTab, setInnerTab] = useState('intake');
+
+  const handleNav = (navId) => {
+    if (navId === 'workspaces') {
+      setSelectedWs(null);
+      setActiveNav('workspaces');
+    } else if (navId === 'accounts') {
+      setSelectedWs(null);
+      setActiveNav('accounts');
+    } else if (navId === 'intake' && selectedWs) {
+      setInnerTab('intake');
+      setActiveNav('intake');
+    } else if (navId === 'strategy' && selectedWs) {
+      setInnerTab('strategy');
+      setActiveNav('strategy');
+    } else if (navId === 'intelligence' && selectedWs) {
+      setInnerTab('intelligence');
+      setActiveNav('intelligence');
+    } else {
+      setActiveNav(navId);
+    }
+  };
+
+  const handleSelectWs = (ws) => {
+    setSelectedWs(ws);
+    setActiveNav('intake');
+    setInnerTab('intake');
+  };
+
+  const navContext = selectedWs
+    ? (innerTab === 'strategy' ? 'strategy' : innerTab === 'intelligence' ? 'intelligence' : 'intake')
+    : activeNav;
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: T.bg, overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        activeNav={navContext}
+        onNav={handleNav}
+        user={user}
+        onLogout={onLogout}
+        mode={mode}
+        toggleTheme={toggle}
+        wsSelected={!!selectedWs}
+      />
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {activeNav === 'workspaces' && !selectedWs && (
+          <WorkspacesView T={T} onSelect={handleSelectWs} breadcrumbs={['Workspaces']} collapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)} />
+        )}
+        {selectedWs && (
+          <WorkspaceDetail T={T} workspace={selectedWs} activeInnerTab={innerTab} user={user}
+            onBack={() => { setSelectedWs(null); setActiveNav('workspaces'); }}
+            onDeleted={() => { setSelectedWs(null); setActiveNav('workspaces'); showToast('Workspace deleted'); }}
+            onInnerTabChange={(t) => { setInnerTab(t); setActiveNav(t); }}
+          />
+        )}
+        {activeNav === 'accounts' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0' }}>
+            <HeaderBar T={T} breadcrumbs={['Accounts']} collapsed={false} onToggleSidebar={null} />
+            <div style={{ padding: '24px', maxWidth: 900, margin: '0 auto' }}>
+              <ManageAccountsInline T={T} currentUser={user} />
+            </div>
+          </div>
+        )}
+      </div>
+      <ToastContainer T={T} />
+      </div>
+      <StatusBar />
+    </div>
+  );
+}
+
+// ─── Client Dashboard ─────────────────────────────────────────────────────────
+function ClientDashboard({ T, user, onLogout, mode, toggle }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [activeNav, setActiveNav] = useState('overview');
+
+  const clientNavItems = [
+    { id: 'overview', icon: 'barChart', label: 'Overview' },
+    { id: 'intake', icon: 'document', label: 'Intake' },
+    { id: 'strategy', icon: 'crosshair', label: 'Strategy' },
+  ];
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: T.bg, overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        activeNav={activeNav}
+        onNav={(id) => setActiveNav(id)}
+        user={user}
+        onLogout={onLogout}
+        mode={mode}
+        toggleTheme={toggle}
+        wsSelected={false}
+        isClient={true}
+      />
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <ClientPortal T={T} user={user} workspaceId={user.workspace_id} activeNav={activeNav} onNavChange={setActiveNav} />
+      </div>
+      <ToastContainer T={T} />
+      </div>
+      <StatusBar />
+    </div>
+  );
+}
+
+// ─── Manage Accounts Inline ───────────────────────────────────────────────────
+function ManageAccountsInline({ T, currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('client');
+  const [newWsId, setNewWsId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [resetPwdUser, setResetPwdUser] = useState(null);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  const load = async () => {
+    const [u, w] = await Promise.all([apiFetch('/users'), apiFetch('/workspaces')]);
+    if (Array.isArray(u)) setUsers(u);
+    if (Array.isArray(w)) setWorkspaces(w);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const createUser = async () => {
+    if (!newEmail || !newPassword) return;
+    setCreating(true); setCreateError('');
+    const res = await apiFetch('/users', {
+      method: 'POST',
+      body: JSON.stringify({ email: newEmail, password: newPassword, name: newName, role: newRole, workspace_id: newWsId }),
+    });
+    setCreating(false);
+    if (res.error) { setCreateError(res.error); return; }
+    setNewEmail(''); setNewName(''); setNewPassword(''); setNewRole('client'); setNewWsId('');
+    load();
+  };
+
+  const deleteUser = async (uid) => {
+    await apiFetch(`/users?id=${uid}`, { method: 'DELETE' });
+    setConfirmDeleteUser(null); load();
+  };
+
+  const resetPassword = async () => {
+    if (!resetPwdUser || !newPwd) return;
+    await apiFetch('/users/password', { method: 'POST', body: JSON.stringify({ id: resetPwdUser.id, password: newPwd }) });
+    setResetPwdUser(null); setNewPwd('');
+  };
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: T.textMuted }}>
+      <div style={{ fontSize: 13 }}>Loading accounts...</div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Create User */}
+      <Card T={T} style={{ padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 16 }}>Create New Account</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <Input T={T} value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email *" type="email" />
+          <Input T={T} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Name" />
+          <Input T={T} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password *" type="password" />
+          <Select T={T} value={newRole} onChange={e => setNewRole(e.target.value)} options={[
+            { value: 'client', label: 'Client' }, { value: 'ridge_admin', label: 'Ridge Admin' },
+          ]} style={{ width: '100%' }} />
+          {newRole === 'client' && (
+            <Select T={T} value={newWsId} onChange={e => setNewWsId(e.target.value)} options={[
+              { value: '', label: 'No workspace' },
+              ...workspaces.map(w => ({ value: w.id, label: w.name })),
+            ]} style={{ width: '100%' }} />
+          )}
+        </div>
+        {createError && (
+          <div style={{ fontSize: 12, color: T.danger, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: T.dangerBg, borderRadius: 6 }}>
+            <Icon name="alertTriangle" size={13} />
+            {createError}
+          </div>
+        )}
+        <Btn T={T} small onClick={createUser} disabled={creating || !newEmail || !newPassword}>
+          {creating ? 'Creating...' : <><Icon name="plus" size={13} />Create Account</>}
+        </Btn>
+      </Card>
+
+      {/* Users Table */}
+      <Card T={T} style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            All Accounts ({users.length})
+          </div>
+        </div>
+        <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+          {users.map(u => (
+            <div key={u.id} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderBottom: `1px solid ${T.border}`, gap: 8,
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{u.name || u.email}</div>
+                <div style={{ fontSize: 12, color: T.textMuted, display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  {u.email}
+                  <span style={{ color: T.border }}>·</span>
+                  <Badge T={T} color={u.role === 'ridge_admin' ? 'green' : 'orange'}>{u.role}</Badge>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {resetPwdUser?.id === u.id ? (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Input T={T} value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="New password" type="password" style={{ width: 140 }} />
+                    <Btn T={T} small onClick={resetPassword} disabled={!newPwd}>Save</Btn>
+                    <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(null)}><Icon name="x" size={12} /></Btn>
+                  </div>
+                ) : (
+                  <Btn T={T} variant="outline" small onClick={() => setResetPwdUser(u)}>Reset Password</Btn>
+                )}
+                {confirmDeleteUser === u.id ? (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <Btn T={T} variant="danger" small onClick={() => deleteUser(u.id)}>Confirm</Btn>
+                    <Btn T={T} variant="outline" small onClick={() => setConfirmDeleteUser(null)}><Icon name="x" size={12} /></Btn>
+                  </div>
+                ) : (
+                  u.id !== currentUser?.id && (
+                    <Btn T={T} variant="danger" small onClick={() => setConfirmDeleteUser(u.id)}>Delete</Btn>
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+function App() {
+  const { T, mode, toggle, setMode } = useTheme();
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get('token');
+    if (tokenFromUrl) SESSION_TOKEN = tokenFromUrl;
+
+    const timeout = setTimeout(() => setAuthChecked(true), 2000);
+    apiFetch('/auth/session').then(data => {
+      clearTimeout(timeout);
+      if (data?.user) {
+        setUser(data.user);
+      }
+      apiFetch('/settings?key=theme').then(d => {
+        if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
+      });
+      setAuthChecked(true);
+    }).catch(() => { clearTimeout(timeout); setAuthChecked(true); });
+  }, []);
+
+  const handleLogin = (userData, token) => {
+    SESSION_TOKEN = token;
+    setUser(userData);
+    apiFetch('/settings?key=theme').then(d => {
+      if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
+    });
+  };
+
+  const handleLogout = async () => {
+    if (SESSION_TOKEN) {
+      await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ token: SESSION_TOKEN }) });
+    }
+    SESSION_TOKEN = null;
+    setUser(null);
+  };
+
+  if (!authChecked) {
+    return (
+      <div style={{ height: '100vh', background: '#1B2028', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+          <OrbitalLoader T={T} progress={0} status="Initializing" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <LoginScreen T={T} onLogin={handleLogin} />;
+
+  if (user.role === 'ridge_admin') {
+    return <AdminDashboard T={T} user={user} onLogout={handleLogout} mode={mode} toggle={toggle} />;
+  }
+
+  return <ClientDashboard T={T} user={user} onLogout={handleLogout} mode={mode} toggle={toggle} />;
+}
+
+// Error Boundary to prevent white screen crashes
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('Ridge Engine Error:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', {
+        style: { height: '100vh', background: '#1B2028', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }
+      },
+        React.createElement('img', { src: './logo-dark.png', alt: 'Ridge', style: { height: 26 } }),
+        React.createElement('div', { style: { color: '#E8EAED', fontSize: 14, fontWeight: 500 } }, 'Something went wrong.'),
+        React.createElement('button', {
+          onClick: () => window.location.reload(),
+          style: { padding: '8px 20px', borderRadius: 6, fontSize: 13, background: '#1C3C34', color: '#fff', border: 'none', cursor: 'pointer' }
+        }, 'Reload')
+      );
+    }
+    return this.props.children;
+  }
+}
+
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
+</script>
+</body>
+</html>

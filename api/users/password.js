@@ -1,0 +1,19 @@
+import { getDb, sha256, handleCors } from '../_db.js';
+
+export default async function handler(req, res) {
+  if (handleCors(req, res)) return;
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
+
+  try {
+    const sql = getDb();
+    const { id, password } = req.body || {};
+    if (id && password) {
+      const h = sha256(password);
+      await sql`UPDATE users SET password_hash=${h} WHERE id=${id}`;
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('Password error:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}

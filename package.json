@@ -1,0 +1,9 @@
+{
+  "name": "ridge-strategy-engine",
+  "version": "2.1.0",
+  "private": true,
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "node-fetch": "^3.3.2"
+  }
+}
