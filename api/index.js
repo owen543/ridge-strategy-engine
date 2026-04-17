@@ -372,14 +372,10 @@ async function handleAuthGoogle(req, res) {
   const gName = payload.name || '';
   if (!gEmail) return res.status(400).json({ error: 'No email in Google token' });
   const existing = await sql`SELECT * FROM users WHERE email=${gEmail}`;
-  let user;
-  if (existing.length > 0) { user = { ...existing[0] }; }
-  else {
-    const uid = `usr_${uuid()}`;
-    const ph = crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex');
-    await sql`INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES (${uid}, ${gEmail}, ${ph}, ${gName}, 'client', '', ${Date.now() / 1000})`;
-    user = { id: uid, email: gEmail, name: gName, role: 'client', workspace_id: '', created_at: Date.now() / 1000 };
+  if (existing.length === 0) {
+    return res.status(403).json({ error: 'Access denied. Your account has not been authorized. Contact your Ridge administrator.' });
   }
+  const user = { ...existing[0] };
   const token = crypto.randomUUID().replace(/-/g, '');
   await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
   delete user.password_hash;
