@@ -1,4 +1,5 @@
 import { sql } from '@vercel/postgres';
+import crypto from 'crypto';
 
 export { sql };
 
@@ -70,12 +71,10 @@ export async function initDb() {
 }
 
 export function sha256(str) {
-  const crypto = require('crypto');
   return crypto.createHash('sha256').update(str).digest('hex');
 }
 
 export function uuid() {
-  const crypto = require('crypto');
   return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
 }
 

@@ -8,8 +8,8 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const key = req.query.key;
       if (key) {
-        const { rows } = await sql`SELECT value FROM settings WHERE key=${key}`;
-        return res.json({ value: rows.length > 0 ? rows[0].value : '' });
+        const { rows: keyRows } = await sql`SELECT value FROM settings WHERE key=${key}`;
+        return res.json({ value: keyRows.length > 0 ? keyRows[0].value : '' });
       }
       const { rows } = await sql`SELECT * FROM settings`;
       const obj = {};

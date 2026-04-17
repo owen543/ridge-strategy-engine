@@ -1,4 +1,5 @@
 import { sql, initDb, uuid, handleCors } from '../_db.js';
+import crypto from 'crypto';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -27,12 +28,12 @@ export default async function handler(req, res) {
       user = { ...existing[0] };
     } else {
       const uid = `usr_${uuid()}`;
-      const placeholderHash = require('crypto').createHash('sha256').update(require('crypto').randomUUID()).digest('hex');
+      const placeholderHash = crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex');
       await sql`INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES (${uid}, ${gEmail}, ${placeholderHash}, ${gName}, 'client', '', ${Date.now() / 1000})`;
       user = { id: uid, email: gEmail, name: gName, role: 'client', workspace_id: '', created_at: Date.now() / 1000 };
     }
 
-    const token = require('crypto').randomUUID().replace(/-/g, '');
+    const token = crypto.randomUUID().replace(/-/g, '');
     await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
     delete user.password_hash;
     return res.json({ user, token });

@@ -1,4 +1,5 @@
 import { sql, initDb, sha256, handleCors } from '../_db.js';
+import crypto from 'crypto';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -15,7 +16,7 @@ export default async function handler(req, res) {
     if (rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = { ...rows[0] };
-    const token = require('crypto').randomUUID().replace(/-/g, '');
+    const token = crypto.randomUUID().replace(/-/g, '');
     await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
     delete user.password_hash;
     return res.json({ user, token });
