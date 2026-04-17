@@ -1,6 +1,160 @@
 const { neon } = require('@neondatabase/serverless');
 const crypto = require('crypto');
 
+// ─── Rate Limiting (Upstash Redis or in-memory fallback) ─────────────────────
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.ridge_UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.ridge_UPSTASH_REDIS_REST_TOKEN;
+
+// Rate limit config
+const RL_MAX_ATTEMPTS = 10;       // attempts per window
+const RL_WINDOW_SEC = 60;         // sliding window in seconds
+const RL_BACKOFF_BASE = 60;       // initial backoff in seconds
+const RL_BACKOFF_MAX = 3600;      // max backoff: 1 hour
+const RL_ESCALATION_WINDOW = 86400; // 24h escalation tracking
+
+// In-memory fallback when Redis is unavailable
+const memoryRL = new Map(); // key -> { attempts: [], escalations: 0, blockedUntil: 0 }
+
+async function upstashCmd(cmd, ...args) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  try {
+    const r = await fetch(`${UPSTASH_URL}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify([cmd, ...args]),
+    });
+    const d = await r.json();
+    return d.result;
+  } catch { return null; }
+}
+
+async function upstashPipeline(commands) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  try {
+    const r = await fetch(`${UPSTASH_URL}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(commands),
+    });
+    const d = await r.json();
+    return d;
+  } catch { return null; }
+}
+
+function getRateLimitKey(ip, email) {
+  const e = (email || '').trim().toLowerCase();
+  return e ? `rl:${ip}:${e}` : `rl:${ip}:_`;
+}
+
+async function checkRateLimit(ip, email) {
+  const key = getRateLimitKey(ip, email);
+  const now = Date.now();
+  const nowSec = now / 1000;
+
+  // Try Redis first
+  if (UPSTASH_URL && UPSTASH_TOKEN) {
+    try {
+      const windowKey = `rate:${key}`;
+      const escKey = `esc:${key}`;
+      const blockKey = `block:${key}`;
+
+      // Check if currently blocked
+      const blocked = await upstashCmd('GET', blockKey);
+      if (blocked) {
+        const blockedUntil = parseInt(blocked, 10);
+        if (nowSec < blockedUntil) {
+          const retryAfter = Math.ceil(blockedUntil - nowSec);
+          return { allowed: false, retryAfter, remaining: 0 };
+        }
+      }
+
+      // Sliding window: count attempts in last RL_WINDOW_SEC
+      const cutoff = nowSec - RL_WINDOW_SEC;
+      const pipeline = [
+        ['ZREMRANGEBYSCORE', windowKey, '0', String(cutoff)],
+        ['ZCARD', windowKey],
+      ];
+      const results = await upstashPipeline(pipeline);
+      if (!results) throw new Error('Pipeline failed');
+      const count = results[1]?.result || 0;
+
+      if (count >= RL_MAX_ATTEMPTS) {
+        // Get escalation count
+        const escCount = parseInt(await upstashCmd('GET', escKey) || '0', 10);
+        const backoff = Math.min(RL_BACKOFF_BASE * Math.pow(2, escCount), RL_BACKOFF_MAX);
+        const blockedUntil = nowSec + backoff;
+
+        // Set block and increment escalation
+        await upstashPipeline([
+          ['SET', blockKey, String(Math.floor(blockedUntil)), 'EX', String(backoff + 10)],
+          ['INCR', escKey],
+          ['EXPIRE', escKey, String(RL_ESCALATION_WINDOW)],
+        ]);
+
+        return { allowed: false, retryAfter: backoff, remaining: 0 };
+      }
+
+      return { allowed: true, remaining: RL_MAX_ATTEMPTS - count };
+    } catch {
+      // Redis error: fail open
+      return { allowed: true, remaining: RL_MAX_ATTEMPTS };
+    }
+  }
+
+  // In-memory fallback
+  if (!memoryRL.has(key)) {
+    memoryRL.set(key, { attempts: [], escalations: 0, blockedUntil: 0 });
+  }
+  const entry = memoryRL.get(key);
+
+  // Check block
+  if (entry.blockedUntil > now) {
+    return { allowed: false, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000), remaining: 0 };
+  }
+
+  // Clean old attempts
+  const cutoff = now - (RL_WINDOW_SEC * 1000);
+  entry.attempts = entry.attempts.filter(t => t > cutoff);
+
+  if (entry.attempts.length >= RL_MAX_ATTEMPTS) {
+    const backoff = Math.min(RL_BACKOFF_BASE * Math.pow(2, entry.escalations), RL_BACKOFF_MAX);
+    entry.blockedUntil = now + (backoff * 1000);
+    entry.escalations++;
+    return { allowed: false, retryAfter: backoff, remaining: 0 };
+  }
+
+  return { allowed: true, remaining: RL_MAX_ATTEMPTS - entry.attempts.length };
+}
+
+async function recordAttempt(ip, email) {
+  const key = getRateLimitKey(ip, email);
+  const nowSec = Date.now() / 1000;
+
+  if (UPSTASH_URL && UPSTASH_TOKEN) {
+    try {
+      const windowKey = `rate:${key}`;
+      await upstashPipeline([
+        ['ZADD', windowKey, String(nowSec), `${nowSec}:${Math.random().toString(36).slice(2, 8)}`],
+        ['EXPIRE', windowKey, String(RL_WINDOW_SEC * 2)],
+      ]);
+    } catch { /* fail open */ }
+    return;
+  }
+
+  // In-memory fallback
+  if (!memoryRL.has(key)) {
+    memoryRL.set(key, { attempts: [], escalations: 0, blockedUntil: 0 });
+  }
+  memoryRL.get(key).attempts.push(Date.now());
+}
+
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.headers['x-real-ip']
+    || req.socket?.remoteAddress
+    || '0.0.0.0';
+}
+
 // ─── Database ────────────────────────────────────────────────────────────────
 function getDb() {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING || process.env.ridge_DATABASE_URL || process.env.ridge_POSTGRES_URL || process.env.ridge_DATABASE_URL_UNPOOLED;
@@ -115,9 +269,30 @@ async function handleAuthLogin(req, res) {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const e = email.trim().toLowerCase();
+  const ip = getClientIP(req);
+
+  // Rate limit check
+  const rl = await checkRateLimit(ip, e);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({
+      error: `Too many login attempts. Try again in ${formatRetryTime(rl.retryAfter)}.`,
+      retryAfter: rl.retryAfter,
+    });
+  }
+
   const h = sha256(password);
   const rows = await sql`SELECT * FROM users WHERE email=${e} AND password_hash=${h}`;
-  if (rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+  if (rows.length === 0) {
+    // Record failed attempt
+    await recordAttempt(ip, e);
+    const remaining = rl.remaining - 1;
+    const msg = remaining <= 3 && remaining > 0
+      ? `Invalid credentials. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout.`
+      : 'Invalid credentials';
+    return res.status(401).json({ error: msg, remaining });
+  }
+
   const user = { ...rows[0] };
   const token = crypto.randomUUID().replace(/-/g, '');
   await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
@@ -125,14 +300,54 @@ async function handleAuthLogin(req, res) {
   return res.json({ user, token });
 }
 
+function formatRetryTime(seconds) {
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  if (seconds < 3600) { const m = Math.ceil(seconds / 60); return `${m} minute${m === 1 ? '' : 's'}`; }
+  const h = Math.ceil(seconds / 3600); return `${h} hour${h === 1 ? '' : 's'}`;
+}
+
+async function handleRateLimitCheck(req, res) {
+  const { email } = req.body || {};
+  const ip = getClientIP(req);
+  const rl = await checkRateLimit(ip, email);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({
+      error: `Too many attempts. Try again in ${formatRetryTime(rl.retryAfter)}.`,
+      retryAfter: rl.retryAfter,
+      remaining: 0,
+    });
+  }
+  return res.json({ allowed: true, remaining: rl.remaining });
+}
+
+async function handleRateLimitRecordFailure(req, res) {
+  const { email } = req.body || {};
+  const ip = getClientIP(req);
+  await recordAttempt(ip, email);
+  const rl = await checkRateLimit(ip, email);
+  return res.json({ remaining: rl.remaining });
+}
+
+const SESSION_MAX_AGE_SEC = 30 * 24 * 60 * 60; // 30 days
+
 async function handleAuthSession(req, res) {
   await initDb();
   const sql = getDb();
   const token = req.query.token;
   if (!token) return res.json({ user: null });
-  const rows = await sql`SELECT u.id, u.email, u.name, u.role, u.workspace_id, u.created_at FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=${token}`;
+  const rows = await sql`SELECT s.created_at as session_created, u.id, u.email, u.name, u.role, u.workspace_id, u.created_at FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=${token}`;
   if (rows.length === 0) return res.json({ user: null });
-  return res.json({ user: rows[0] });
+  // Check session expiry
+  const sessionAge = (Date.now() / 1000) - (rows[0].session_created || 0);
+  if (sessionAge > SESSION_MAX_AGE_SEC) {
+    await sql`DELETE FROM sessions WHERE token=${token}`;
+    return res.json({ user: null, expired: true });
+  }
+  // Touch: extend session by updating created_at (sliding window)
+  await sql`UPDATE sessions SET created_at=${Date.now() / 1000} WHERE token=${token}`;
+  const { session_created, ...user } = rows[0];
+  return res.json({ user });
 }
 
 async function handleAuthLogout(req, res) {
@@ -460,6 +675,8 @@ module.exports = async function handler(req, res) {
     if (path === 'auth/session' && req.method === 'GET') return await handleAuthSession(req, res);
     if (path === 'auth/logout' && req.method === 'POST') return await handleAuthLogout(req, res);
     if (path === 'auth/google' && req.method === 'POST') return await handleAuthGoogle(req, res);
+    if (path === 'auth/rate-limit-check' && req.method === 'POST') return await handleRateLimitCheck(req, res);
+    if (path === 'auth/rate-limit-record-failure' && req.method === 'POST') return await handleRateLimitRecordFailure(req, res);
 
     // Users routes
     if (path === 'users' && req.method === 'GET') return await handleUsersGet(req, res);

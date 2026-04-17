@@ -66,8 +66,14 @@ const { createRoot } = ReactDOM;
 const API = `/api`;
 const AI_API = `/api/ai`;
 
-// ─── In-memory session token (storage is blocked in sandboxed iframes) ─────────
+// ─── Persistent session token (localStorage with in-memory fallback) ──────────
 let SESSION_TOKEN = null;
+try { SESSION_TOKEN = localStorage.getItem('ridge_session_token'); } catch {}
+function persistToken(token) {
+  SESSION_TOKEN = token;
+  try { if (token) localStorage.setItem('ridge_session_token', token); else localStorage.removeItem('ridge_session_token'); } catch {}
+}
+function clearToken() { persistToken(null); }
 
 async function apiFetch(path, options = {}) {
   const sep = path.includes('?') ? '&' : '?';
@@ -196,6 +202,7 @@ function Icon({ name, size = 16, color = 'currentColor', style = {}, className =
     flag: <><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></>,
     sun: <><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>,
     moon: <><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></>,
+    lock: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></>,
     logout: <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
     menu: <><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></>,
     chevronDown: <><polyline points="6,9 12,15 18,9"/></>,
@@ -998,7 +1005,33 @@ function LoginScreen({ T, onLogin }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [lockedOut, setLockedOut] = useState(false);
+  const [lockCountdown, setLockCountdown] = useState(0);
+  const [attemptsRemaining, setAttemptsRemaining] = useState(null);
+  const countdownRef = useRef(null);
   const googleBtnRef = useRef(null);
+
+  // Countdown timer for rate limiting lockout
+  useEffect(() => {
+    if (lockCountdown <= 0) {
+      setLockedOut(false);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      return;
+    }
+    countdownRef.current = setInterval(() => {
+      setLockCountdown(prev => {
+        if (prev <= 1) { setLockedOut(false); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
+  }, [lockCountdown > 0]);
+
+  const formatCountdown = (s) => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60); const sec = s % 60;
+    return sec > 0 ? `${m}m ${sec}s` : `${m}m`;
+  };
 
   const handleGoogleResponse = useCallback(async (response) => {
     setError(''); setGoogleLoading(true);
@@ -1007,7 +1040,7 @@ function LoginScreen({ T, onLogin }) {
         method: 'POST', body: JSON.stringify({ credential: response.credential }),
       });
       if (data.error) { setError(data.error); setGoogleLoading(false); return; }
-      SESSION_TOKEN = data.token;
+      persistToken(data.token);
       onLogin(data.user, data.token);
     } catch (e) {
       setError('Google sign-in failed. Please try again.'); setGoogleLoading(false);
@@ -1078,13 +1111,28 @@ function LoginScreen({ T, onLogin }) {
   }, [handleGoogleResponse]);
 
   const handleLogin = async () => {
+    if (lockedOut) return;
     setError(''); setLoading(true);
     try {
       const data = await apiFetch('/auth/login', {
         method: 'POST', body: JSON.stringify({ email, password }),
       });
-      if (data.error) { setError(data.error); setLoading(false); return; }
-      SESSION_TOKEN = data.token;
+      if (data.retryAfter) {
+        setLockedOut(true);
+        setLockCountdown(data.retryAfter);
+        setError(data.error);
+        setAttemptsRemaining(0);
+        setLoading(false);
+        return;
+      }
+      if (data.error) {
+        if (typeof data.remaining === 'number') setAttemptsRemaining(data.remaining);
+        setError(data.error);
+        setLoading(false);
+        return;
+      }
+      setAttemptsRemaining(null);
+      persistToken(data.token);
       onLogin(data.user, data.token);
     } catch (e) {
       setError('Connection error. Please try again.'); setLoading(false);
@@ -1092,7 +1140,7 @@ function LoginScreen({ T, onLogin }) {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && email && password && !loading) handleLogin();
+    if (e.key === 'Enter' && email && password && !loading && !lockedOut) handleLogin();
   };
 
   // Custom Google button for when GIS library is not loaded or no client ID
@@ -1199,15 +1247,20 @@ function LoginScreen({ T, onLogin }) {
                 {error}
               </div>
             )}
-            <button onClick={handleLogin} disabled={loading || !email || !password} style={{
+            <button onClick={handleLogin} disabled={loading || !email || !password || lockedOut} style={{
               width: '100%', height: 36, borderRadius: 6, fontSize: 13, fontWeight: 500,
-              background: loading || !email || !password ? 'rgba(28,60,52,0.5)' : '#1C3C34',
-              color: '#FFFFFF', border: 'none', cursor: loading || !email || !password ? 'not-allowed' : 'pointer',
+              background: lockedOut ? 'rgba(226,85,85,0.15)'
+                : (loading || !email || !password) ? 'rgba(28,60,52,0.5)' : '#1C3C34',
+              color: lockedOut ? '#E25555' : '#FFFFFF',
+              border: lockedOut ? '1px solid rgba(226,85,85,0.3)' : 'none',
+              cursor: (loading || !email || !password || lockedOut) ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               transition: 'background 0.15s',
               marginTop: 4,
             }}>
-              {loading ? (
+              {lockedOut ? (
+                <><Icon name="lock" size={14} color="#E25555" /> Locked ({formatCountdown(lockCountdown)})</>
+              ) : loading ? (
                 <><Icon name="loader" size={14} color="#fff" style={{ animation: 'spin 1s linear infinite' }} /> Signing in</>
               ) : 'Sign In'}
             </button>
@@ -3789,12 +3842,14 @@ function App() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('token');
-    if (tokenFromUrl) SESSION_TOKEN = tokenFromUrl;
+    if (tokenFromUrl) persistToken(tokenFromUrl);
 
     const timeout = setTimeout(() => setAuthChecked(true), 2000);
     apiFetch('/auth/session').then(data => {
       clearTimeout(timeout);
-      if (data?.user) {
+      if (data?.expired) {
+        clearToken();
+      } else if (data?.user) {
         setUser(data.user);
       }
       apiFetch('/settings?key=theme').then(d => {
@@ -3805,7 +3860,7 @@ function App() {
   }, []);
 
   const handleLogin = (userData, token) => {
-    SESSION_TOKEN = token;
+    persistToken(token);
     setUser(userData);
     apiFetch('/settings?key=theme').then(d => {
       if (d?.value === 'dark' || d?.value === 'light') setMode(d.value);
@@ -3816,7 +3871,7 @@ function App() {
     if (SESSION_TOKEN) {
       await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ token: SESSION_TOKEN }) });
     }
-    SESSION_TOKEN = null;
+    clearToken();
     setUser(null);
   };
 
