@@ -37,12 +37,21 @@ const CLAUDE_SONNET = 'claude-sonnet-4-5-20250929';
 const GPT4O_MINI = 'gpt-4o-mini';
 const GPT4O = 'gpt-4o';
 
+function stripMarkdownFences(text) {
+  let t = text.trim();
+  if (t.startsWith('```json')) t = t.slice(7);
+  else if (t.startsWith('```')) t = t.slice(3);
+  if (t.endsWith('```')) t = t.slice(0, -3);
+  return t.trim();
+}
+
 async function callAnthropic(sys, usr, model = CLAUDE_SONNET, max = 5000) {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'user', content: usr }], system: sys }) });
     const b = await r.json();
     if (!r.ok) return { ok: false, error: `Anthropic ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic' };
-    return { ok: true, text: (b.content || []).filter(x => x.type === 'text').map(x => x.text).join(''), model, provider: 'anthropic', usage: b.usage || {} };
+    const raw = (b.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
+    return { ok: true, text: stripMarkdownFences(raw), model, provider: 'anthropic', usage: b.usage || {} };
   } catch (e) { return { ok: false, error: e.message, provider: 'anthropic' }; }
 }
 
@@ -69,7 +78,7 @@ async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000) {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }], messages: [{ role: 'user', content: usr }], system: sys }) });
     const b = await r.json();
     if (!r.ok) return { ok: false, error: `Anthropic Search ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic_search' };
-    return { ok: true, text: (b.content || []).filter(x => x.type === 'text').map(x => x.text).join(''), model, provider: 'anthropic_search', usage: b.usage || {} };
+    return { ok: true, text: stripMarkdownFences((b.content || []).filter(x => x.type === 'text').map(x => x.text).join('')), model, provider: 'anthropic_search', usage: b.usage || {} };
   } catch (e) { return { ok: false, error: e.message, provider: 'anthropic_search' }; }
 }
 
