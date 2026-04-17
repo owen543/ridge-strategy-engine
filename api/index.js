@@ -3,7 +3,7 @@ const crypto = require('crypto');
 
 // ─── Database ────────────────────────────────────────────────────────────────
 function getDb() {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING;
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING || process.env.ridge_DATABASE_URL || process.env.ridge_POSTGRES_URL || process.env.ridge_DATABASE_URL_UNPOOLED;
   if (!url) throw new Error('No DATABASE_URL env var found');
   return neon(url);
 }
