@@ -40,3 +40,4 @@ After adding Postgres storage, trigger a redeploy:
 - **Backend**: Vercel Serverless Functions in `/api`
 - **Database**: Vercel Postgres (`@vercel/postgres`)
 - **AI**: Anthropic Claude + OpenAI GPT-4o (dual fallback)
+
