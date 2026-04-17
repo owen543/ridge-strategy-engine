@@ -74,12 +74,17 @@ async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000) {
 }
 
 async function callAI(sys, usr, pref = 'sonnet', max = 5000, search = false) {
-  if (search) { const r = await callOpenAISearch(sys, usr, undefined, max); if (r.ok) return r; return callOpenAI(sys, usr, GPT4O, max); }
+  if (search) {
+    const r = await callAnthropicSearch(sys, usr, CLAUDE_HAIKU, max);
+    if (r.ok) return r;
+    if (OPENAI_KEY) { const r2 = await callOpenAISearch(sys, usr, undefined, max); if (r2.ok) return r2; }
+    return callAnthropic(sys, usr, CLAUDE_SONNET, max);
+  }
   const cm = pref === 'sonnet' ? CLAUDE_SONNET : CLAUDE_HAIKU;
-  const om = ['sonnet', 'gpt4o'].includes(pref) ? GPT4O : GPT4O_MINI;
   const r = await callAnthropic(sys, usr, cm, max);
   if (r.ok) return r;
-  return callOpenAI(sys, usr, om, max);
+  if (OPENAI_KEY) { const om = ['sonnet', 'gpt4o'].includes(pref) ? GPT4O : GPT4O_MINI; return callOpenAI(sys, usr, om, max); }
+  return r;
 }
 
 // ─── Route Handlers ──────────────────────────────────────────────────────────
@@ -396,7 +401,7 @@ async function handleAI(req, res) {
     if (!q) return res.status(400).json({ error: 'query required' });
     const sys = `You are a B2B sales intelligence scanner. Search the web for the given query. Find recent news, announcements, social posts, and events that could be relevant for outbound sales prospecting.\n\nAfter searching, return ONLY a valid JSON array of signals. No markdown, no backticks, no explanation. Each signal object:\n{"headline":"Short headline","source":"Source name","url":"URL if available","date":"ISO date or relative","signal_type":"funding|hiring|leadership_change|earnings|competitor|regulatory|product_launch|market_trend|expansion|layoff|acquisition|partnership|pain_signal|tech_adoption|social_post","summary":"1-2 sentence explanation","companies_mentioned":["Company A"],"urgency":"immediate|this_week|monitor","relevance_score":85}\n\nReturn 3-5 of the most relevant and recent signals.`;
     let r = await callAnthropicSearch(sys, `Search for: ${q}\n\n${ctx}`, CLAUDE_HAIKU, 4000);
-    if (!r.ok) r = await callOpenAISearch(sys, `Search for: ${q}\n\n${ctx}`, undefined, 4000);
+    if (!r.ok && OPENAI_KEY) r = await callOpenAISearch(sys, `Search for: ${q}\n\n${ctx}`, undefined, 4000);
     return res.json(r);
   }
 
@@ -412,7 +417,7 @@ async function handleAI(req, res) {
     const sys = 'Search for current US stock market data. Return ONLY JSON, no markdown, no backticks.';
     const usr = `Get today's US market data. Return ONLY this JSON:\n{"sp500":{"price":"","change_pct":""},"nasdaq":{"price":"","change_pct":""},"ten_year_yield":"","vix":"","updated":""}\nIf markets are closed, return last closing data.`;
     let r = await callAnthropicSearch(sys, usr, CLAUDE_HAIKU, 500);
-    if (!r.ok) r = await callOpenAISearch(sys, usr, undefined, 500);
+    if (!r.ok && OPENAI_KEY) r = await callOpenAISearch(sys, usr, undefined, 500);
     return res.json(r);
   }
 
