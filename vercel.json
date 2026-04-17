@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/(.*)", "destination": "/public/$1" }
   ],
   "headers": [
@@ -12,5 +12,10 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type,Authorization" }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    }
+  }
 }
