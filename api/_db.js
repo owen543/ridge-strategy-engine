@@ -1,9 +1,21 @@
-import { sql } from '@vercel/postgres';
+import { neon } from '@neondatabase/serverless';
 import crypto from 'crypto';
 
-export { sql };
+let _sql;
+
+function getDb() {
+  if (!_sql) {
+    const url = process.env.POSTGRES_URL || process.env.STORAGE_URL || process.env.DATABASE_URL;
+    if (!url) throw new Error('No database URL found. Set POSTGRES_URL, STORAGE_URL, or DATABASE_URL.');
+    _sql = neon(url);
+  }
+  return _sql;
+}
+
+export { getDb };
 
 export async function initDb() {
+  const sql = getDb();
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,

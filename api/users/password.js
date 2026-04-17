@@ -1,10 +1,11 @@
-import { sql, sha256, handleCors } from '../_db.js';
+import { getDb, sha256, handleCors } from '../_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
 
   try {
+    const sql = getDb();
     const { id, password } = req.body || {};
     if (id && password) {
       const h = sha256(password);

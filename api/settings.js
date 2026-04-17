@@ -1,17 +1,18 @@
-import { sql, initDb, handleCors } from './_db.js';
+import { getDb, initDb, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   await initDb();
+  const sql = getDb();
 
   try {
     if (req.method === 'GET') {
       const key = req.query.key;
       if (key) {
-        const { rows: keyRows } = await sql`SELECT value FROM settings WHERE key=${key}`;
+        const keyRows = await sql`SELECT value FROM settings WHERE key=${key}`;
         return res.json({ value: keyRows.length > 0 ? keyRows[0].value : '' });
       }
-      const { rows } = await sql`SELECT * FROM settings`;
+      const rows = await sql`SELECT * FROM settings`;
       const obj = {};
       for (const r of rows) obj[r.key] = r.value;
       return res.json(obj);

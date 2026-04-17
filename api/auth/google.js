@@ -1,4 +1,4 @@
-import { sql, initDb, uuid, handleCors } from '../_db.js';
+import { getDb, initDb, uuid, handleCors } from '../_db.js';
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
@@ -7,6 +7,7 @@ export default async function handler(req, res) {
 
   try {
     await initDb();
+    const sql = getDb();
     const { credential } = req.body || {};
     if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
 
@@ -22,7 +23,7 @@ export default async function handler(req, res) {
     const gName = payload.name || '';
     if (!gEmail) return res.status(400).json({ error: 'No email in Google token' });
 
-    const { rows: existing } = await sql`SELECT * FROM users WHERE email=${gEmail}`;
+    const existing = await sql`SELECT * FROM users WHERE email=${gEmail}`;
     let user;
     if (existing.length > 0) {
       user = { ...existing[0] };

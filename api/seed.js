@@ -1,4 +1,4 @@
-import { sql, initDb, sha256, uuid, handleCors } from './_db.js';
+import { getDb, initDb, sha256, uuid, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -6,6 +6,7 @@ export default async function handler(req, res) {
 
   try {
     await initDb();
+    const sql = getDb();
 
     const now = Date.now() / 1000;
     const admins = [
@@ -14,7 +15,7 @@ export default async function handler(req, res) {
     ];
 
     for (const admin of admins) {
-      const { rows: existing } = await sql`SELECT id FROM users WHERE email=${admin.email}`;
+      const existing = await sql`SELECT id FROM users WHERE email=${admin.email}`;
       if (existing.length === 0) {
         const uid = `usr_${uuid()}`;
         const h = sha256(admin.password);

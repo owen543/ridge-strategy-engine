@@ -1,12 +1,13 @@
-import { sql, initDb, uuid, handleCors } from './_db.js';
+import { getDb, initDb, uuid, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   await initDb();
+  const sql = getDb();
 
   try {
     if (req.method === 'GET') {
-      const { rows } = await sql`SELECT * FROM workspaces ORDER BY created_at DESC`;
+      const rows = await sql`SELECT * FROM workspaces ORDER BY created_at DESC`;
       return res.json(rows);
     }
 
