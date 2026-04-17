@@ -1,14 +1,13 @@
-import { getDb, initDb, handleCors } from './_db.js';
+import { query, initDb, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   await initDb();
-  const sql = getDb();
 
   try {
     if (req.method === 'GET') {
       const wid = req.query.workspace_id;
-      const rows = await sql`SELECT * FROM intelligence_data WHERE workspace_id=${wid}`;
+      const rows = await query('SELECT * FROM intelligence_data WHERE workspace_id=$1', [wid]);
       if (rows.length > 0) {
         const r = rows[0];
         return res.json({
@@ -32,7 +31,7 @@ export default async function handler(req, res) {
       const lastScan = body.last_scan_at || Date.now() / 1000;
       const scanCount = body.scan_count || 0;
       const now = Date.now() / 1000;
-      await sql`INSERT INTO intelligence_data (workspace_id, signals, dismissed, drafts, last_scan_at, scan_count, updated_at) VALUES (${wid}, ${signals}, ${dismissed}, ${drafts}, ${lastScan}, ${scanCount}, ${now}) ON CONFLICT(workspace_id) DO UPDATE SET signals=EXCLUDED.signals, dismissed=EXCLUDED.dismissed, drafts=EXCLUDED.drafts, last_scan_at=EXCLUDED.last_scan_at, scan_count=EXCLUDED.scan_count, updated_at=EXCLUDED.updated_at`;
+      await query('INSERT INTO intelligence_data (workspace_id, signals, dismissed, drafts, last_scan_at, scan_count, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(workspace_id) DO UPDATE SET signals=EXCLUDED.signals, dismissed=EXCLUDED.dismissed, drafts=EXCLUDED.drafts, last_scan_at=EXCLUDED.last_scan_at, scan_count=EXCLUDED.scan_count, updated_at=EXCLUDED.updated_at', [wid, signals, dismissed, drafts, lastScan, scanCount, now]);
       return res.json({ ok: true });
     }
 

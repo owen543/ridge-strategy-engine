@@ -1,4 +1,4 @@
-import { getDb, initDb, uuid, handleCors } from '../_db.js';
+import { query, initDb, uuid, handleCors } from '../_db.js';
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
@@ -7,7 +7,6 @@ export default async function handler(req, res) {
 
   try {
     await initDb();
-    const sql = getDb();
     const { credential } = req.body || {};
     if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
 
@@ -23,19 +22,19 @@ export default async function handler(req, res) {
     const gName = payload.name || '';
     if (!gEmail) return res.status(400).json({ error: 'No email in Google token' });
 
-    const existing = await sql`SELECT * FROM users WHERE email=${gEmail}`;
+    const existing = await query('SELECT * FROM users WHERE email=$1', [gEmail]);
     let user;
     if (existing.length > 0) {
       user = { ...existing[0] };
     } else {
       const uid = `usr_${uuid()}`;
       const placeholderHash = crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex');
-      await sql`INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES (${uid}, ${gEmail}, ${placeholderHash}, ${gName}, 'client', '', ${Date.now() / 1000})`;
+      await query('INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [uid, gEmail, placeholderHash, gName, 'client', '', Date.now() / 1000]);
       user = { id: uid, email: gEmail, name: gName, role: 'client', workspace_id: '', created_at: Date.now() / 1000 };
     }
 
     const token = crypto.randomUUID().replace(/-/g, '');
-    await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
+    await query('INSERT INTO sessions (token, user_id, created_at) VALUES ($1, $2, $3)', [token, user.id, Date.now() / 1000]);
     delete user.password_hash;
     return res.json({ user, token });
   } catch (e) {

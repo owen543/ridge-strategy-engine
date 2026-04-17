@@ -1,22 +1,31 @@
-import { neon } from '@neondatabase/serverless';
+import pg from 'pg';
 import crypto from 'crypto';
 
-let _sql;
+const { Pool } = pg;
 
-function getDb() {
-  if (!_sql) {
+let pool;
+
+function getPool() {
+  if (!pool) {
     const url = process.env.POSTGRES_URL || process.env.STORAGE_URL || process.env.DATABASE_URL;
-    if (!url) throw new Error('No database URL found. Set POSTGRES_URL, STORAGE_URL, or DATABASE_URL.');
-    _sql = neon(url);
+    if (!url) throw new Error('No database URL found. Set POSTGRES_URL, STORAGE_URL, or DATABASE_URL env var.');
+    pool = new Pool({
+      connectionString: url,
+      ssl: { rejectUnauthorized: false },
+      max: 5,
+    });
   }
-  return _sql;
+  return pool;
 }
 
-export { getDb };
+export async function query(text, params) {
+  const p = getPool();
+  const result = await p.query(text, params);
+  return result.rows;
+}
 
 export async function initDb() {
-  const sql = getDb();
-  await sql`
+  await query(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -26,15 +35,15 @@ export async function initDb() {
       workspace_id TEXT DEFAULT '',
       created_at DOUBLE PRECISION
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       created_at DOUBLE PRECISION
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -48,28 +57,28 @@ export async function initDb() {
       is_client INTEGER DEFAULT 1,
       notes TEXT DEFAULT ''
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS intake_data (
       workspace_id TEXT PRIMARY KEY,
       data TEXT NOT NULL DEFAULT '{}',
       updated_at DOUBLE PRECISION
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS strategy_data (
       workspace_id TEXT PRIMARY KEY,
       data TEXT NOT NULL DEFAULT '{}',
       updated_at DOUBLE PRECISION
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL DEFAULT ''
     )
-  `;
-  await sql`
+  `);
+  await query(`
     CREATE TABLE IF NOT EXISTS intelligence_data (
       workspace_id TEXT PRIMARY KEY,
       signals TEXT NOT NULL DEFAULT '[]',
@@ -79,7 +88,7 @@ export async function initDb() {
       scan_count INTEGER DEFAULT 0,
       updated_at DOUBLE PRECISION
     )
-  `;
+  `);
 }
 
 export function sha256(str) {

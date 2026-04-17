@@ -1,4 +1,4 @@
-import { getDb, initDb, sha256, uuid, handleCors } from './_db.js';
+import { query, initDb, sha256, uuid, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -6,7 +6,6 @@ export default async function handler(req, res) {
 
   try {
     await initDb();
-    const sql = getDb();
 
     const now = Date.now() / 1000;
     const admins = [
@@ -15,15 +14,15 @@ export default async function handler(req, res) {
     ];
 
     for (const admin of admins) {
-      const existing = await sql`SELECT id FROM users WHERE email=${admin.email}`;
+      const existing = await query('SELECT id FROM users WHERE email=$1', [admin.email]);
       if (existing.length === 0) {
         const uid = `usr_${uuid()}`;
         const h = sha256(admin.password);
-        await sql`INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES (${uid}, ${admin.email}, ${h}, ${admin.name}, 'ridge_admin', '', ${now})`;
+        await query('INSERT INTO users (id, email, password_hash, name, role, workspace_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [uid, admin.email, h, admin.name, 'ridge_admin', '', now]);
       }
     }
 
-    await sql`INSERT INTO settings (key, value) VALUES ('theme', 'dark') ON CONFLICT(key) DO NOTHING`;
+    await query("INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT(key) DO NOTHING", ['theme', 'dark']);
 
     return res.json({ ok: true, message: 'Database seeded with admin accounts' });
   } catch (e) {

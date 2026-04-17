@@ -1,4 +1,4 @@
-import { getDb, initDb, sha256, handleCors } from '../_db.js';
+import { query, initDb, sha256, handleCors } from '../_db.js';
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
@@ -7,18 +7,17 @@ export default async function handler(req, res) {
 
   try {
     await initDb();
-    const sql = getDb();
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
     const e = email.trim().toLowerCase();
     const h = sha256(password);
-    const rows = await sql`SELECT * FROM users WHERE email=${e} AND password_hash=${h}`;
+    const rows = await query('SELECT * FROM users WHERE email=$1 AND password_hash=$2', [e, h]);
     if (rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = { ...rows[0] };
     const token = crypto.randomUUID().replace(/-/g, '');
-    await sql`INSERT INTO sessions (token, user_id, created_at) VALUES (${token}, ${user.id}, ${Date.now() / 1000})`;
+    await query('INSERT INTO sessions (token, user_id, created_at) VALUES ($1, $2, $3)', [token, user.id, Date.now() / 1000]);
     delete user.password_hash;
     return res.json({ user, token });
   } catch (e) {
