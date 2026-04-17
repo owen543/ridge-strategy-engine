@@ -1,13 +1,12 @@
-import { getDb, initDb, sha256, uuid, handleCors } from './_db.js';
+import { sql, initDb, sha256, uuid, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
-  const sql = getDb();
   await initDb();
 
   try {
     if (req.method === 'GET') {
-      const rows = await sql`SELECT id, email, name, role, workspace_id, created_at FROM users ORDER BY created_at DESC`;
+      const { rows } = await sql`SELECT id, email, name, role, workspace_id, created_at FROM users ORDER BY created_at DESC`;
       return res.json(rows);
     }
 
@@ -15,7 +14,7 @@ export default async function handler(req, res) {
       const { email, password, name, role, workspace_id } = req.body || {};
       if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
       const e = email.trim().toLowerCase();
-      const existing = await sql`SELECT id FROM users WHERE email=${e}`;
+      const { rows: existing } = await sql`SELECT id FROM users WHERE email=${e}`;
       if (existing.length > 0) return res.status(400).json({ error: 'Email already exists' });
       const uid = `usr_${uuid()}`;
       const h = sha256(password);

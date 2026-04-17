@@ -1,11 +1,10 @@
-import { getDb, initDb, sha256, uuid, handleCors } from './_db.js';
+import { sql, initDb, sha256, uuid, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
 
   try {
-    const sql = getDb();
     await initDb();
 
     const now = Date.now() / 1000;
@@ -15,7 +14,7 @@ export default async function handler(req, res) {
     ];
 
     for (const admin of admins) {
-      const existing = await sql`SELECT id FROM users WHERE email=${admin.email}`;
+      const { rows: existing } = await sql`SELECT id FROM users WHERE email=${admin.email}`;
       if (existing.length === 0) {
         const uid = `usr_${uuid()}`;
         const h = sha256(admin.password);
@@ -23,10 +22,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // Set default theme to dark
     await sql`INSERT INTO settings (key, value) VALUES ('theme', 'dark') ON CONFLICT(key) DO NOTHING`;
 
-    return res.json({ ok: true, message: 'Database seeded' });
+    return res.json({ ok: true, message: 'Database seeded with admin accounts' });
   } catch (e) {
     console.error('Seed error:', e);
     return res.status(500).json({ error: e.message });

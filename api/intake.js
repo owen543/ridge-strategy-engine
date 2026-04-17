@@ -1,14 +1,13 @@
-import { getDb, initDb, handleCors } from './_db.js';
+import { sql, initDb, handleCors } from './_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
-  const sql = getDb();
   await initDb();
 
   try {
     if (req.method === 'GET') {
       const wid = req.query.workspace_id;
-      const rows = await sql`SELECT data FROM intake_data WHERE workspace_id=${wid}`;
+      const { rows } = await sql`SELECT data FROM intake_data WHERE workspace_id=${wid}`;
       if (rows.length > 0) return res.json(JSON.parse(rows[0].data));
       return res.json({});
     }

@@ -1,16 +1,8 @@
-import { neon } from '@neondatabase/serverless';
+import { sql } from '@vercel/postgres';
 
-let sql;
-
-export function getDb() {
-  if (!sql) {
-    sql = neon(process.env.DATABASE_URL);
-  }
-  return sql;
-}
+export { sql };
 
 export async function initDb() {
-  const sql = getDb();
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -25,7 +17,7 @@ export async function initDb() {
   await sql`
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
+      user_id TEXT NOT NULL,
       created_at DOUBLE PRECISION
     )
   `;
@@ -46,14 +38,14 @@ export async function initDb() {
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS intake_data (
-      workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+      workspace_id TEXT PRIMARY KEY,
       data TEXT NOT NULL DEFAULT '{}',
       updated_at DOUBLE PRECISION
     )
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS strategy_data (
-      workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+      workspace_id TEXT PRIMARY KEY,
       data TEXT NOT NULL DEFAULT '{}',
       updated_at DOUBLE PRECISION
     )
@@ -66,7 +58,7 @@ export async function initDb() {
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS intelligence_data (
-      workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+      workspace_id TEXT PRIMARY KEY,
       signals TEXT NOT NULL DEFAULT '[]',
       dismissed TEXT NOT NULL DEFAULT '[]',
       drafts TEXT NOT NULL DEFAULT '{}',
@@ -87,14 +79,10 @@ export function uuid() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
 }
 
-export function cors(res) {
+export function handleCors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-}
-
-export function handleCors(req, res) {
-  cors(res);
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return true;

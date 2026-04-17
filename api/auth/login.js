@@ -1,18 +1,17 @@
-import { getDb, initDb, sha256, uuid, handleCors } from '../_db.js';
+import { sql, initDb, sha256, handleCors } from '../_db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
 
   try {
-    const sql = getDb();
     await initDb();
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
     const e = email.trim().toLowerCase();
     const h = sha256(password);
-    const rows = await sql`SELECT * FROM users WHERE email=${e} AND password_hash=${h}`;
+    const { rows } = await sql`SELECT * FROM users WHERE email=${e} AND password_hash=${h}`;
     if (rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = { ...rows[0] };
