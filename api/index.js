@@ -30,8 +30,8 @@ function setCors(res) {
 }
 
 // ─── AI Helpers ──────────────────────────────────────────────────────────────
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || process.env.ridge_ANTHROPIC_API_KEY;
+const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.ridge_OPENAI_API_KEY;
 const CLAUDE_HAIKU = 'claude-haiku-4-5-20251001';
 const CLAUDE_SONNET = 'claude-sonnet-4-5-20250929';
 const GPT4O_MINI = 'gpt-4o-mini';
@@ -341,7 +341,7 @@ async function handleAI(req, res) {
   const action = b.action || '';
 
   if (action === 'health') {
-    return res.json({ ok: true, providers: ['anthropic', 'openai'], models: { fast: CLAUDE_HAIKU, strategy: CLAUDE_SONNET, fallback_fast: GPT4O_MINI, fallback_strategy: GPT4O, web_search: 'gpt-4o-search-preview' } });
+    return res.json({ ok: true, providers: ['anthropic', 'openai'], anthropic_set: !!ANTHROPIC_KEY, openai_set: !!OPENAI_KEY, models: { fast: CLAUDE_HAIKU, strategy: CLAUDE_SONNET, fallback_fast: GPT4O_MINI, fallback_strategy: GPT4O, web_search: 'gpt-4o-search-preview' } });
   }
 
   if (action === 'scan_website') {
