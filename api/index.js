@@ -74,16 +74,17 @@ async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000) {
 }
 
 async function callAI(sys, usr, pref = 'sonnet', max = 5000, search = false) {
+  // Vercel Hobby plan = 10s timeout. Use Haiku for speed, Sonnet only if explicitly forced.
+  const useModel = (pref === 'force_sonnet') ? CLAUDE_SONNET : CLAUDE_HAIKU;
   if (search) {
     const r = await callAnthropicSearch(sys, usr, CLAUDE_HAIKU, max);
     if (r.ok) return r;
     if (OPENAI_KEY) { const r2 = await callOpenAISearch(sys, usr, undefined, max); if (r2.ok) return r2; }
-    return callAnthropic(sys, usr, CLAUDE_SONNET, max);
+    return callAnthropic(sys, usr, CLAUDE_HAIKU, max);
   }
-  const cm = pref === 'sonnet' ? CLAUDE_SONNET : CLAUDE_HAIKU;
-  const r = await callAnthropic(sys, usr, cm, max);
+  const r = await callAnthropic(sys, usr, useModel, max);
   if (r.ok) return r;
-  if (OPENAI_KEY) { const om = ['sonnet', 'gpt4o'].includes(pref) ? GPT4O : GPT4O_MINI; return callOpenAI(sys, usr, om, max); }
+  if (OPENAI_KEY) { return callOpenAI(sys, usr, GPT4O_MINI, max); }
   return r;
 }
 
