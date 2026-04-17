@@ -30,8 +30,11 @@ function setCors(res) {
 }
 
 // ─── AI Helpers ──────────────────────────────────────────────────────────────
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || process.env.ridge_ANTHROPIC_API_KEY;
-const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.ridge_OPENAI_API_KEY;
+function findEnv(...names) { for (const n of names) { if (process.env[n]) return process.env[n]; } return null; }
+const ANTHROPIC_KEY = findEnv('ANTHROPIC_API_KEY', 'ridge_ANTHROPIC_API_KEY', 'ANTHROPIC_KEY');
+const OPENAI_KEY = findEnv('OPENAI_API_KEY', 'ridge_OPENAI_API_KEY', 'OPENAI_KEY');
+
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const CLAUDE_HAIKU = 'claude-haiku-4-5-20251001';
 const CLAUDE_SONNET = 'claude-sonnet-4-5-20250929';
 const GPT4O_MINI = 'gpt-4o-mini';
@@ -45,14 +48,17 @@ function stripMarkdownFences(text) {
   return t.trim();
 }
 
-async function callAnthropic(sys, usr, model = CLAUDE_SONNET, max = 5000) {
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'user', content: usr }], system: sys }) });
-    const b = await r.json();
-    if (!r.ok) return { ok: false, error: `Anthropic ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic' };
-    const raw = (b.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
-    return { ok: true, text: stripMarkdownFences(raw), model, provider: 'anthropic', usage: b.usage || {} };
-  } catch (e) { return { ok: false, error: e.message, provider: 'anthropic' }; }
+async function callAnthropic(sys, usr, model = CLAUDE_SONNET, max = 5000, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'user', content: usr }], system: sys }) });
+      const b = await r.json();
+      if (r.status === 429 && attempt < retries) { await sleep(5000); continue; }
+      if (!r.ok) return { ok: false, error: `Anthropic ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic' };
+      const raw = (b.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
+      return { ok: true, text: stripMarkdownFences(raw), model, provider: 'anthropic', usage: b.usage || {} };
+    } catch (e) { if (attempt < retries) { await sleep(3000); continue; } return { ok: false, error: e.message, provider: 'anthropic' }; }
+  }
 }
 
 async function callOpenAI(sys, usr, model = GPT4O, max = 5000) {
@@ -73,13 +79,16 @@ async function callOpenAISearch(sys, usr, model = 'gpt-4o-search-preview', max =
   } catch (e) { return { ok: false, error: e.message, provider: 'openai_search' }; }
 }
 
-async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000) {
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }], messages: [{ role: 'user', content: usr }], system: sys }) });
-    const b = await r.json();
-    if (!r.ok) return { ok: false, error: `Anthropic Search ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic_search' };
-    return { ok: true, text: stripMarkdownFences((b.content || []).filter(x => x.type === 'text').map(x => x.text).join('')), model, provider: 'anthropic_search', usage: b.usage || {} };
-  } catch (e) { return { ok: false, error: e.message, provider: 'anthropic_search' }; }
+async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }], messages: [{ role: 'user', content: usr }], system: sys }) });
+      const b = await r.json();
+      if (r.status === 429 && attempt < retries) { await sleep(5000); continue; }
+      if (!r.ok) return { ok: false, error: `Anthropic Search ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic_search' };
+      return { ok: true, text: stripMarkdownFences((b.content || []).filter(x => x.type === 'text').map(x => x.text).join('')), model, provider: 'anthropic_search', usage: b.usage || {} };
+    } catch (e) { if (attempt < retries) { await sleep(3000); continue; } return { ok: false, error: e.message, provider: 'anthropic_search' }; }
+  }
 }
 
 async function callAI(sys, usr, pref = 'sonnet', max = 5000, search = false) {
@@ -356,7 +365,8 @@ async function handleAI(req, res) {
   const action = b.action || '';
 
   if (action === 'health') {
-    return res.json({ ok: true, providers: ['anthropic', 'openai'], anthropic_set: !!ANTHROPIC_KEY, openai_set: !!OPENAI_KEY, models: { fast: CLAUDE_HAIKU, strategy: CLAUDE_SONNET, fallback_fast: GPT4O_MINI, fallback_strategy: GPT4O, web_search: 'gpt-4o-search-preview' } });
+    const envKeys = Object.keys(process.env).filter(k => k.toLowerCase().includes('openai') || k.toLowerCase().includes('anthropic') || k.toLowerCase().includes('api_key'));
+    return res.json({ ok: true, providers: ['anthropic', 'openai'], anthropic_set: !!ANTHROPIC_KEY, openai_set: !!OPENAI_KEY, env_keys_found: envKeys, models: { fast: CLAUDE_HAIKU, strategy: CLAUDE_SONNET, fallback_fast: GPT4O_MINI, fallback_strategy: GPT4O, web_search: 'gpt-4o-search-preview' } });
   }
 
   if (action === 'scan_website') {
