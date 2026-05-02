@@ -536,6 +536,15 @@ function robustJsonParse(raw) {
       // At a comma between items (depth >= 1), record this as a safe truncation point.
       if (c === ',' && stack.length > 0) lastValidEnd = i;
     }
+    // First, simplest case: input is complete except for missing trailing close-brackets
+    // (we ended cleanly outside a string but with stack still open). Try appending closes.
+    if (stack.length > 0 && stack[stack.length - 1] !== '"') {
+      let closed = fixed.replace(/,\s*$/, '');
+      for (let i = stack.length - 1; i >= 0; i--) closed += stack[i] === '{' ? '}' : ']';
+      try { return JSON.parse(closed); } catch {}
+      const cleaned = closed.replace(/,(\s*[}\]])/g, '$1');
+      try { return JSON.parse(cleaned); } catch {}
+    }
     // Reconstruct: truncate at lastValidEnd, then close remaining open brackets in stack order.
     if (lastValidEnd > 0) {
       let truncated = fixed.slice(0, lastValidEnd); // drops the trailing comma & partial item
