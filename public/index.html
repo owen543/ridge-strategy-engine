@@ -1798,55 +1798,60 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
     const results = [];
     const failures = [];
     let lastProvider = null, lastModel = null;
+    let completed = 0;
+
+    // Run a single chunk with 1 retry on parse/network error
+    const runOne = async (chunk, idx) => {
+      let attempts = 0;
+      let lastError = '';
+      while (attempts < 2) {
+        try {
+          const raw = await fetch(AI_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: chunk.action, company_name: companyName, intake_block: intakeBlock, model }),
+          });
+          const res = await raw.json();
+          if (res.ok && res.text) {
+            try {
+              const parsed = robustJsonParse(res.text);
+              results[idx] = parsed;
+              lastProvider = res.provider || lastProvider;
+              lastModel = res.model || lastModel;
+              completed++;
+              setProgress(Math.min(95, Math.round((completed / chunks.length) * 95) + 2));
+              setStatus(`Completed ${completed}/${chunks.length}: ${chunk.label}`);
+              return;
+            } catch (parseErr) {
+              lastError = 'Parse error: ' + parseErr.message;
+            }
+          } else {
+            lastError = res.error || 'Unknown error';
+          }
+        } catch (e) {
+          lastError = e.message;
+        }
+        attempts++;
+      }
+      console.warn(`Chunk ${idx+1} (${chunk.action}) failed:`, lastError);
+      failures.push({ chunk: idx+1, action: chunk.action, error: lastError });
+      completed++;
+      setProgress(Math.min(95, Math.round((completed / chunks.length) * 95) + 2));
+    };
 
     try {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        setStatus(`Step ${i+1}/6: ${chunk.label}…`);
+      // Fire all 6 chunks in parallel — each is its own Vercel function invocation,
+      // so they don't share the 60s budget. Total wall time ≈ max(chunk times).
+      setStatus(`Running ${chunks.length} parallel AI calls…`);
+      setProgress(5);
+      await Promise.all(chunks.map((c, i) => runOne(c, i)));
 
-        let attempts = 0;
-        let success = false;
-        let lastError = '';
-        while (attempts < 2 && !success) {
-          try {
-            const raw = await fetch(AI_API, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: chunk.action, company_name: companyName, intake_block: intakeBlock, model }),
-            });
-            const res = await raw.json();
-            if (res.ok && res.text) {
-              try {
-                const parsed = robustJsonParse(res.text);
-                results.push(parsed);
-                lastProvider = res.provider || lastProvider;
-                lastModel = res.model || lastModel;
-                success = true;
-              } catch (parseErr) {
-                lastError = 'Parse error: ' + parseErr.message;
-                attempts++;
-              }
-            } else {
-              lastError = res.error || 'Unknown error';
-              attempts++;
-            }
-          } catch (e) {
-            lastError = e.message;
-            attempts++;
-          }
-        }
-        if (!success) {
-          console.warn(`Chunk ${i+1} (${chunk.action}) failed:`, lastError);
-          failures.push({ chunk: i+1, action: chunk.action, error: lastError });
-        }
-        setProgress(chunk.progress);
-      }
-
-      // Merge all chunks into a single strategy object
-      const fullStrategy = Object.assign({}, ...results);
+      // Merge all chunks into a single strategy object (filter undefined slots from failures)
+      const fullStrategy = Object.assign({}, ...results.filter(Boolean));
 
       // If we got nothing at all, hard fail
-      if (results.length === 0) {
+      const successCount = results.filter(Boolean).length;
+      if (successCount === 0) {
         setError(`All 6 strategy steps failed. First error: ${failures[0]?.error || 'unknown'}`);
         setRunning(false);
         showToast('Strategy generation failed', 'error');
@@ -1859,7 +1864,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
         body: JSON.stringify({ workspace_id: workspaceId, data: fullStrategy }),
       });
 
-      const partial = failures.length > 0 ? ` (${failures.length} of 6 steps failed — partial result)` : '';
+      const partial = failures.length > 0 ? ` (${failures.length} of ${chunks.length} steps failed — partial result)` : '';
       setProgress(100);
       setStatus(`Strategy complete via ${lastProvider || 'AI'} (${lastModel || 'haiku'})${partial}`);
       showToast(failures.length > 0 ? `Strategy generated with ${failures.length} partial failures` : 'Strategy generated successfully', failures.length > 0 ? 'warning' : 'success');
