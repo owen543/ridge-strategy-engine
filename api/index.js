@@ -229,16 +229,24 @@ function stripMarkdownFences(text) {
   return t.trim();
 }
 
-async function callAnthropic(sys, usr, model = CLAUDE_SONNET, max = 5000, retries = 1) {
+async function callAnthropic(sys, usr, model = CLAUDE_SONNET, max = 5000, retries = 3) {
+  // 3 retries with exponential backoff + jitter — handles 429 (rate limit) and 529 (overloaded)
+  // when 6 chunks fire in parallel and exceed Anthropic per-account TPM/RPM.
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: max, messages: [{ role: 'user', content: usr }], system: sys }) });
       const b = await r.json();
-      if (r.status === 429 && attempt < retries) { await sleep(5000); continue; }
+      const isRetryable = (r.status === 429 || r.status === 529 || r.status === 503 || r.status === 502);
+      if (isRetryable && attempt < retries) {
+        // exponential backoff: 2s, 5s, 10s + 0-2s jitter so parallel callers desync
+        const base = [2000, 5000, 10000][attempt] || 10000;
+        await sleep(base + Math.floor(Math.random() * 2000));
+        continue;
+      }
       if (!r.ok) return { ok: false, error: `Anthropic ${r.status}: ${JSON.stringify(b)}`, provider: 'anthropic' };
       const raw = (b.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
       return { ok: true, text: stripMarkdownFences(raw), model, provider: 'anthropic', usage: b.usage || {} };
-    } catch (e) { if (attempt < retries) { await sleep(3000); continue; } return { ok: false, error: e.message, provider: 'anthropic' }; }
+    } catch (e) { if (attempt < retries) { await sleep(3000 + Math.floor(Math.random() * 2000)); continue; } return { ok: false, error: e.message, provider: 'anthropic' }; }
   }
 }
 
@@ -285,18 +293,24 @@ async function callAI(sys, usr, pref = 'haiku', max = 5000, search = false) {
     return callAnthropic(sys, usr, CLAUDE_HAIKU, max);
   }
 
+  // Helper: only fallback to OpenAI if it has real quota (not the depleted shared key).
+  // The depleted key returns insufficient_quota immediately, so cross-provider fallback is
+  // worthless and just produces misleading error messages. Detect via env var presence.
+  const hasRealOpenAI = !!findEnv('OPENAI_API_KEY', 'ridge_OPENAI_API_KEY', 'OPENAI_KEY');
+
   // Primary call
   if (sel.provider === 'openai') {
     const r = await callOpenAI(sys, usr, sel.id, max);
     if (r.ok) return r;
-    // Fallback to Anthropic Haiku if the OpenAI model fails
+    // Fallback to Anthropic Haiku if OpenAI fails — Anthropic key is reliable
     if (ANTHROPIC_KEY) return callAnthropic(sys, usr, CLAUDE_HAIKU, max);
     return r;
   } else {
     const r = await callAnthropic(sys, usr, sel.id, max);
     if (r.ok) return r;
-    // Fallback to OpenAI mini if Anthropic fails
-    if (OPENAI_KEY) return callOpenAI(sys, usr, GPT4O_MINI, max);
+    // Only fallback to OpenAI if the user actually has an OpenAI key configured —
+    // the hardcoded shared key is depleted and would just return insufficient_quota.
+    if (hasRealOpenAI) return callOpenAI(sys, usr, GPT4O_MINI, max);
     return r;
   }
 }

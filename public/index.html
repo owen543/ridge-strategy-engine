@@ -1841,10 +1841,13 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
 
     try {
       // Fire all 6 chunks in parallel — each is its own Vercel function invocation,
-      // so they don't share the 60s budget. Total wall time ≈ max(chunk times).
+      // so they don't share the 60s budget. Stagger by 200ms each to avoid hammering
+      // Anthropic with 6 simultaneous requests (which trips per-account RPM limits).
+      // Total wall time ≈ max(chunk times) + (5 * 200ms) = ~21s with Haiku.
       setStatus(`Running ${chunks.length} parallel AI calls…`);
       setProgress(5);
-      await Promise.all(chunks.map((c, i) => runOne(c, i)));
+      const stagger = (ms) => new Promise(r => setTimeout(r, ms));
+      await Promise.all(chunks.map(async (c, i) => { await stagger(i * 200); return runOne(c, i); }));
 
       // Merge all chunks into a single strategy object (filter undefined slots from failures)
       const fullStrategy = Object.assign({}, ...results.filter(Boolean));
@@ -1895,7 +1898,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
     <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 14 }}>
       <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>Strategy Generation</div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
-        Runs six focused AI calls in sequence — each fits inside Vercel's 10-second function window. Pick a model below; Haiku is fastest and most reliable, Opus 4.7 / GPT-5.5 are smartest. OpenAI auto-fallback if Anthropic stalls. Output merges into a complete 11-section strategy.
+        Runs six focused AI calls in parallel — each is its own serverless invocation with a 60-second budget, staggered slightly so Anthropic stays happy. Pick a model below; Haiku is fastest and most reliable, Opus 4.7 / GPT-5.5 are smartest. Built-in retry with backoff handles transient rate limits. Output merges into a complete 11-section strategy.
       </div>
 
       {running ? (
