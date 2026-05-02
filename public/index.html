@@ -1775,8 +1775,13 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
   const [running, setRunning] = useState(false);
   const [model, setModel] = useState('claude-haiku-4-5');
   const [error, setError] = useState('');
+  // Re-entry guard — prevents double-dispatch from React 18 StrictMode or rapid clicks.
+  // Using a ref because state updates are async and won't block a same-tick re-call.
+  const runStrategyLockRef = useRef(false);
 
   const runStrategyLive = async () => {
+    if (runStrategyLockRef.current) { console.warn('[strategy] run already in flight — ignoring duplicate'); return; }
+    runStrategyLockRef.current = true;
     setRunning(true); setProgress(0); setError('');
     setStatus('Loading intake data…');
     setProgress(2);
@@ -1849,6 +1854,8 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
       for (let w = 0; w < chunks.length; w += WAVE_SIZE) {
         const wave = chunks.slice(w, w + WAVE_SIZE);
         await Promise.all(wave.map((c, j) => runOne(c, w + j)));
+        // Small breather between waves so Anthropic's per-minute counters drain.
+        if (w + WAVE_SIZE < chunks.length) await new Promise(r => setTimeout(r, 1500));
       }
 
       // Merge all chunks into a single strategy object (filter undefined slots from failures)
@@ -1859,6 +1866,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
       if (successCount === 0) {
         setError(`All 6 strategy steps failed. First error: ${failures[0]?.error || 'unknown'}`);
         setRunning(false);
+        runStrategyLockRef.current = false;
         showToast('Strategy generation failed', 'error');
         return;
       }
@@ -1879,6 +1887,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
       showToast('Strategy generation error', 'error');
     }
     setRunning(false);
+    runStrategyLockRef.current = false;
   };
 
   const runStrategyDemo = async () => {
