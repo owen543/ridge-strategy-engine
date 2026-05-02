@@ -1112,6 +1112,38 @@ function LoginScreen({ T, onLogin }) {
 
   const [gsiReady, setGsiReady] = useState(false);
   const [gsiError, setGsiError] = useState(false);
+  const tokenClientRef = useRef(null);
+
+  const handleGoogleAccessToken = useCallback(async (accessToken) => {
+    setError(''); setGoogleLoading(true);
+    try {
+      const data = await apiFetch('/auth/google', {
+        method: 'POST', body: JSON.stringify({ access_token: accessToken }),
+      });
+      if (data.error) { setError(data.error); setGoogleLoading(false); return; }
+      persistToken(data.token);
+      onLogin(data.user, data.token);
+    } catch (e) {
+      setError('Google sign-in failed. Please try again.'); setGoogleLoading(false);
+    }
+  }, [onLogin]);
+
+  const switchGoogleAccount = useCallback(() => {
+    try {
+      // Clear any cached auto-select state
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        try { window.google.accounts.id.disableAutoSelect(); } catch (_) {}
+      }
+      if (tokenClientRef.current) {
+        tokenClientRef.current.requestAccessToken({ prompt: 'select_account' });
+      } else {
+        setError('Google sign-in is still loading. Please try again in a moment.');
+      }
+    } catch (err) {
+      console.warn('Switch Google account failed:', err);
+      setError('Could not open Google account picker. Please try again.');
+    }
+  }, []);
 
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) return;
@@ -1124,6 +1156,30 @@ function LoginScreen({ T, onLogin }) {
             auto_select: false,
             itp_support: true,
           });
+          // Prevent auto-picking the previously used account so user can choose
+          try { window.google.accounts.id.disableAutoSelect(); } catch (_) {}
+
+          // Token client enables explicit account picker via OAuth2 popup
+          try {
+            if (window.google.accounts.oauth2 && !tokenClientRef.current) {
+              tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+                client_id: GOOGLE_CLIENT_ID,
+                scope: 'openid email profile',
+                prompt: 'select_account',
+                callback: (resp) => {
+                  if (resp && resp.access_token) {
+                    handleGoogleAccessToken(resp.access_token);
+                  } else if (resp && resp.error) {
+                    console.warn('Google token client error:', resp.error);
+                    setError('Google sign-in was cancelled or failed. Please try again.');
+                  }
+                },
+              });
+            }
+          } catch (err) {
+            console.warn('Google token client init failed:', err);
+          }
+
           if (googleBtnRef.current) {
             window.google.accounts.id.renderButton(googleBtnRef.current, {
               type: 'standard',
@@ -1171,7 +1227,7 @@ function LoginScreen({ T, onLogin }) {
       const timeout = setTimeout(() => { clearInterval(checkInterval); setGsiError(true); }, 8000);
       return () => { clearInterval(checkInterval); clearTimeout(timeout); };
     }
-  }, [handleGoogleResponse]);
+  }, [handleGoogleResponse, handleGoogleAccessToken]);
 
   const handleLogin = async () => {
     if (lockedOut) return;
@@ -1248,6 +1304,21 @@ function LoginScreen({ T, onLogin }) {
           <div style={{ marginBottom: 20 }}>
             {GOOGLE_CLIENT_ID && !gsiError && (
               <div ref={googleBtnRef} style={{ display: gsiReady ? 'flex' : 'none', justifyContent: 'center' }} />
+            )}
+            {GOOGLE_CLIENT_ID && !gsiError && gsiReady && (
+              <div style={{ textAlign: 'center', marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={switchGoogleAccount}
+                  style={{
+                    background: 'transparent', border: 'none', padding: 0,
+                    color: '#8A8F98', fontSize: 12, cursor: 'pointer',
+                    textDecoration: 'underline', fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+                  }}
+                >
+                  Use a different Google account
+                </button>
+              </div>
             )}
             {(!gsiReady || gsiError || !GOOGLE_CLIENT_ID) && (
               <button

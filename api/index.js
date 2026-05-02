@@ -414,17 +414,41 @@ async function handleAuthLogout(req, res) {
 async function handleAuthGoogle(req, res) {
   await initDb();
   const sql = getDb();
-  const { credential } = req.body || {};
-  if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
-  const parts = credential.split('.');
-  if (parts.length !== 3) return res.status(400).json({ error: 'Invalid token format' });
-  let payloadB64 = parts[1];
-  const padding = 4 - (payloadB64.length % 4);
-  if (padding !== 4) payloadB64 += '='.repeat(padding);
-  const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
-  const gEmail = (payload.email || '').trim().toLowerCase();
-  const gName = payload.name || '';
-  if (!gEmail) return res.status(400).json({ error: 'No email in Google token' });
+  const { credential, access_token } = req.body || {};
+
+  let gEmail = '';
+  let gName = '';
+
+  if (credential) {
+    // Original GIS One Tap / button flow — verify the JWT credential
+    const parts = credential.split('.');
+    if (parts.length !== 3) return res.status(400).json({ error: 'Invalid token format' });
+    let payloadB64 = parts[1];
+    const padding = 4 - (payloadB64.length % 4);
+    if (padding !== 4) payloadB64 += '='.repeat(padding);
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    gEmail = (payload.email || '').trim().toLowerCase();
+    gName = payload.name || '';
+  } else if (access_token) {
+    // OAuth2 popup flow with prompt=select_account — verify the access token
+    // by calling Google's userinfo endpoint. This lets the user pick a different
+    // Google account every sign-in instead of GIS auto-selecting the last one.
+    try {
+      const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { 'Authorization': `Bearer ${access_token}` },
+      });
+      if (!r.ok) return res.status(401).json({ error: 'Invalid Google access token' });
+      const info = await r.json();
+      gEmail = (info.email || '').trim().toLowerCase();
+      gName = info.name || '';
+    } catch (e) {
+      return res.status(401).json({ error: 'Failed to verify Google access token: ' + e.message });
+    }
+  } else {
+    return res.status(400).json({ error: 'Missing Google credential or access_token' });
+  }
+
+  if (!gEmail) return res.status(400).json({ error: 'No email in Google response' });
   const existing = await sql`SELECT * FROM users WHERE email=${gEmail}`;
   if (existing.length === 0) {
     return res.status(403).json({ error: 'Access denied. Your account has not been authorized. Contact your Ridge administrator.' });
