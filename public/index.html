@@ -513,6 +513,60 @@ function robustJsonParse(raw) {
       try { return JSON.parse(fixed.slice(0, i + 1)); } catch {}
     }
   }
+  // Truncation repair: model was cut off mid-string/object/array. Walk a stack-based
+  // tokenizer through the input; when we hit the cut-off, close all still-open structures
+  // by tracking the bracket stack itself (not just depth counts).
+  try {
+    const stack = []; // stack of opening chars: '{', '[', '"'
+    let lastValidEnd = -1; // index AFTER which we have a complete top-level item
+    let esc = false;
+    for (let i = 0; i < fixed.length; i++) {
+      const c = fixed[i];
+      const top = stack[stack.length - 1];
+      if (top === '"') {
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === '"') stack.pop();
+        continue;
+      }
+      if (c === '"') { stack.push('"'); continue; }
+      if (c === '{' || c === '[') { stack.push(c); continue; }
+      if (c === '}' && top === '{') { stack.pop(); continue; }
+      if (c === ']' && top === '[') { stack.pop(); continue; }
+      // At a comma between items (depth >= 1), record this as a safe truncation point.
+      if (c === ',' && stack.length > 0) lastValidEnd = i;
+    }
+    // Reconstruct: truncate at lastValidEnd, then close remaining open brackets in stack order.
+    if (lastValidEnd > 0) {
+      let truncated = fixed.slice(0, lastValidEnd); // drops the trailing comma & partial item
+      // Re-walk truncated to know what's still open
+      const stack2 = []; let esc2 = false;
+      for (let i = 0; i < truncated.length; i++) {
+        const c = truncated[i]; const top = stack2[stack2.length - 1];
+        if (top === '"') {
+          if (esc2) { esc2 = false; continue; }
+          if (c === '\\') { esc2 = true; continue; }
+          if (c === '"') stack2.pop();
+          continue;
+        }
+        if (c === '"') { stack2.push('"'); continue; }
+        if (c === '{' || c === '[') { stack2.push(c); continue; }
+        if (c === '}' && top === '{') { stack2.pop(); continue; }
+        if (c === ']' && top === '[') { stack2.pop(); continue; }
+      }
+      // If still inside a string, the comma we picked was inside a string — unsafe; bail.
+      if (stack2[stack2.length - 1] !== '"') {
+        let closed = truncated;
+        // Close in reverse stack order
+        for (let i = stack2.length - 1; i >= 0; i--) {
+          closed += stack2[i] === '{' ? '}' : ']';
+        }
+        // Strip trailing commas before close
+        closed = closed.replace(/,(\s*[}\]])/g, '$1');
+        try { return JSON.parse(closed); } catch {}
+      }
+    }
+  } catch {}
   throw new Error('JSON parse failed after all repair stages. Raw: ' + s.slice(0, 100));
 }
 
