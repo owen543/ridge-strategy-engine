@@ -598,24 +598,70 @@ async function handleAI(req, res) {
     return res.json(await callAI(sys, usr, 'haiku', 3000));
   }
 
-  if (action === 'strategy_part_a') {
-    const cn = b.company_name || '';
-    const ib = b.intake_block || '';
-    const m = b.model || 'sonnet';
+  // ─── CHUNKED STRATEGY GENERATION (6 small calls, each < 10s for Vercel Hobby) ───
+  const STRAT_SYS = 'Output ONLY valid JSON. No markdown, no backticks, no commentary. Single-line string values. Escape quotes with backslash.\nRules: VP+ seniority default. Observation > Offer tone. Never say: "Hope this finds you well", "Just checking in", "Synergy", "Leverage", "Game-changing"';
+
+  if (action === 'strategy_chunk_1') {
+    // ICP + Targeting
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const sys = 'Output ONLY valid JSON. No markdown, no backticks, no commentary. Single-line string values. Escape quotes with backslash.\nRules: VP+ seniority default. Observation > Offer tone. Never say: "Hope this finds you well", "Just checking in", "Synergy", "Leverage", "Game-changing"';
-    const usr = `Strategy Part A for: ${cn}\n\n${ib}\n\nReturn JSON:\n{"client_name":"","offer_summary":"","icp_summary":"","icp_refinement":{"primary_segments":[{"segment":"","description":"","fit_score":85},{"segment":"","description":"","fit_score":75}],"secondary_segments":[{"segment":"","description":"","fit_score":60}],"narrowing_recommendations":["",""],"red_flags":["",""]},"decision_maker_targeting":{"seniority_policy":"VP_PLUS_DEFAULT","primary_titles":[{"title":"","rationale":""},{"title":"","rationale":""}],"secondary_titles":[{"title":"","rationale":""}],"avoid_titles":["",""],"buying_committee":{"who_cares":"","who_signs":"","who_influences":"","who_blocks":""}},"channel_strategy":{"primary_channel":"","channel_breakdown":[{"channel":"","usage":"","daily_volume":"","notes":""}],"pacing":{"ramp_week_1":"","steady_state":"","multi_sender":""},"warm_vs_cold":""},"messaging_angles":{"angles":[{"name":"","description":"","when_to_use":"","example_hook":"","strength":85},{"name":"","description":"","when_to_use":"","example_hook":"","strength":80}],"lead_with":{"insight":"","curiosity":"","credibility":""},"never_say":["",""]},"value_prop_framing":{"first_touch_simplification":"","outcome_emphasis":{"primary":"","secondary":"","tertiary":""},"proof_point_strategy":{"hint_in_outreach":["",""],"save_for_calls":["",""]}},"meeting_booking":{"cta_style":{"recommended":"","description":"","examples":["",""]},"calendar_link_timing":"","friction_reduction":["",""],"no_show_prevention":["",""]}}`;
-    return res.json(await callAI(sys, usr, m, 4000));
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate ICP refinement and decision-maker targeting. Return JSON:\n{"client_name":"${cn}","offer_summary":"","icp_summary":"","icp_refinement":{"primary_segments":[{"segment":"","description":"","fit_score":85},{"segment":"","description":"","fit_score":75}],"secondary_segments":[{"segment":"","description":"","fit_score":60}],"narrowing_recommendations":["",""],"red_flags":["",""]},"decision_maker_targeting":{"seniority_policy":"VP_PLUS_DEFAULT","primary_titles":[{"title":"","rationale":""},{"title":"","rationale":""}],"secondary_titles":[{"title":"","rationale":""}],"avoid_titles":["",""],"buying_committee":{"who_cares":"","who_signs":"","who_influences":"","who_blocks":""}}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+  }
+
+  if (action === 'strategy_chunk_2') {
+    // Channel strategy + messaging angles
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate channel strategy and messaging angles. Return JSON:\n{"channel_strategy":{"primary_channel":"","channel_breakdown":[{"channel":"","usage":"","daily_volume":"","notes":""}],"pacing":{"ramp_week_1":"","steady_state":"","multi_sender":""},"warm_vs_cold":""},"messaging_angles":{"angles":[{"name":"","description":"","when_to_use":"","example_hook":"","strength":85},{"name":"","description":"","when_to_use":"","example_hook":"","strength":80}],"lead_with":{"insight":"","curiosity":"","credibility":""},"never_say":["",""]},"value_prop_framing":{"first_touch_simplification":"","outcome_emphasis":{"primary":"","secondary":"","tertiary":""},"proof_point_strategy":{"hint_in_outreach":["",""],"save_for_calls":["",""]}},"meeting_booking":{"cta_style":{"recommended":"","description":"","examples":["",""]},"calendar_link_timing":"","friction_reduction":["",""],"no_show_prevention":["",""]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+  }
+
+  if (action === 'strategy_chunk_3') {
+    // Sales Nav + targeting filters
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate Sales Navigator filters and targeting clusters. Return JSON:\n{"sales_nav":{"recommended_filters":{"geography":[""],"company_size":{"min":50,"max":500},"industries":[""],"seniority":[""],"exclude_industries":[""]},"title_patterns":{"high_performers":["",""],"boolean_string":""},"profile_red_flags":["",""]},"targeting":{"seniority_policy":"VP_PLUS_DEFAULT","title_clusters":[{"cluster":"","titles":["",""],"notes":""},{"cluster":"","titles":[""],"notes":""}],"filters":{"company_size_min":50,"company_size_max":500,"industries_include":[""],"exclude":[""]}}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+  }
+
+  if (action === 'strategy_chunk_4') {
+    // Positioning + conversation flow
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate positioning and a 3-message conversation flow for LinkedIn/email. Messages should be specific, observation-first, under 100 words each. Return JSON:\n{"positioning":{"primary_angle":"","philosophy":"","avoid":["",""],"hooks":["",""]},"conversation_flow":{"connect_note":"","message_1":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_2":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_3":{"label":"","text":"","quality_score":85,"quality_notes":""},"cta_rules":"","tone_rules":"","strict_avoid":["",""]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1800));
+  }
+
+  if (action === 'strategy_chunk_5') {
+    // Follow-up + campaign risks
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate follow-up cadence and campaign risk analysis. Return JSON:\n{"follow_up":{"cadence":"","philosophy":"","themes":[{"touch":1,"theme":"","angle":""},{"touch":2,"theme":"","angle":""},{"touch":3,"theme":"","angle":""}]},"campaign_risks":{"likely_objections":[{"objection":"","response_angle":""},{"objection":"","response_angle":""}],"success_signals":["",""],"failure_signals":["",""],"week_1_2_adjustments":["",""]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1200));
+  }
+
+  if (action === 'strategy_chunk_6') {
+    // Execution notes
+    const cn = b.company_name || ''; const ib = b.intake_block || '';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate Ridge execution notes with personalization approach, philosophy, and next steps. Return JSON:\n{"ridge_execution_notes":{"personalization":"","message_philosophy":"","quality_benchmark":"","risks":["",""],"next_steps":["","",""]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 800));
+  }
+
+  // Legacy endpoints (kept for backwards compat — will timeout on Hobby plan)
+  if (action === 'strategy_part_a') {
+    const cn = b.company_name || ''; const ib = b.intake_block || ''; const m = b.model || 'haiku';
+    if (!ib) return res.status(400).json({ error: 'intake_block required' });
+    const usr = `Strategy Part A for: ${cn}\n\n${ib}\n\nReturn JSON with: client_name, offer_summary, icp_summary, icp_refinement (primary_segments, secondary_segments, narrowing_recommendations, red_flags), decision_maker_targeting (primary_titles, secondary_titles, avoid_titles, buying_committee), channel_strategy, messaging_angles, value_prop_framing, meeting_booking.`;
+    return res.json(await callAI(STRAT_SYS, usr, m, 4000));
   }
 
   if (action === 'strategy_part_b') {
-    const cn = b.company_name || '';
-    const ib = b.intake_block || '';
-    const m = b.model || 'sonnet';
+    const cn = b.company_name || ''; const ib = b.intake_block || ''; const m = b.model || 'haiku';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const sys = 'Output ONLY valid JSON. No markdown, no backticks, no commentary. Single-line string values. Escape quotes with backslash.\nRules: VP+ seniority default. Observation > Offer tone. Never say: "Hope this finds you well", "Just checking in", "Synergy", "Leverage", "Game-changing"';
-    const usr = `Strategy Part B for: ${cn}\n\n${ib}\n\nReturn JSON:\n{"sales_nav":{"recommended_filters":{"geography":[""],"company_size":{"min":50,"max":500},"industries":[""],"seniority":[""],"exclude_industries":[""]},"title_patterns":{"high_performers":["",""],"boolean_string":""},"profile_red_flags":["",""]},"campaign_risks":{"likely_objections":[{"objection":"","response_angle":""},{"objection":"","response_angle":""}],"success_signals":["",""],"failure_signals":["",""],"week_1_2_adjustments":["",""]},"targeting":{"seniority_policy":"VP_PLUS_DEFAULT","title_clusters":[{"cluster":"","titles":["",""],"notes":""},{"cluster":"","titles":[""],"notes":""}],"filters":{"company_size_min":50,"company_size_max":500,"industries_include":[""],"exclude":[""]}},"positioning":{"primary_angle":"","philosophy":"","avoid":["",""],"hooks":["",""]},"conversation_flow":{"connect_note":"","message_1":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_2":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_3":{"label":"","text":"","quality_score":85,"quality_notes":""},"cta_rules":"","tone_rules":"","strict_avoid":["",""]},"follow_up":{"cadence":"","philosophy":"","themes":[{"touch":1,"theme":"","angle":""},{"touch":2,"theme":"","angle":""},{"touch":3,"theme":"","angle":""}]},"ridge_execution_notes":{"personalization":"","message_philosophy":"","quality_benchmark":"","risks":["",""],"next_steps":["","",""]}}`;
-    return res.json(await callAI(sys, usr, m, 4000));
+    const usr = `Strategy Part B for: ${cn}\n\n${ib}\n\nReturn JSON with: sales_nav (filters, title_patterns, red_flags), campaign_risks, targeting (title_clusters, filters), positioning, conversation_flow (3 messages), follow_up (cadence, themes), ridge_execution_notes.`;
+    return res.json(await callAI(STRAT_SYS, usr, m, 4000));
   }
 
   if (action === 'summarize_section') {
