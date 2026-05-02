@@ -2596,6 +2596,10 @@ function StrategyView({ T, strategy, workspaceId }) {
   const [saveState, setSaveState] = useState('saved');
   const saveTimer = useRef(null);
 
+  // Sync internal state when parent passes a fresh strategy (e.g. after Run Strategy completes).
+  // Without this, tabs keep showing stale data from initial mount until the page is reloaded.
+  useEffect(() => { setStrat(strategy); }, [strategy]);
+
   const updateStrategy = (newStrat) => {
     setStrat(newStrat);
     setSaveState('unsaved');
