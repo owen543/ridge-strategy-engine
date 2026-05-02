@@ -1845,17 +1845,13 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
     };
 
     try {
-      // Run chunks in waves of 2 — 6 simultaneous Haiku calls trip Anthropic's
-      // per-account RPM/TPM limits even with backoff. 2 at a time stays safe.
-      // Total wall time ≈ 3 waves × ~12s/wave = ~35-45s with Haiku.
-      setStatus(`Running ${chunks.length} AI calls (2 at a time)…`);
+      // Strict sequential — Anthropic's account is capped at 4000 output tokens/min,
+      // and our 6 chunks together request ~10000 max_tokens. Running parallel trips the
+      // limit. Sequential takes ~60-90s but completes reliably 6/6.
+      setStatus(`Running ${chunks.length} AI calls…`);
       setProgress(5);
-      const WAVE_SIZE = 2;
-      for (let w = 0; w < chunks.length; w += WAVE_SIZE) {
-        const wave = chunks.slice(w, w + WAVE_SIZE);
-        await Promise.all(wave.map((c, j) => runOne(c, w + j)));
-        // Small breather between waves so Anthropic's per-minute counters drain.
-        if (w + WAVE_SIZE < chunks.length) await new Promise(r => setTimeout(r, 1500));
+      for (let i = 0; i < chunks.length; i++) {
+        await runOne(chunks[i], i);
       }
 
       // Merge all chunks into a single strategy object (filter undefined slots from failures)
@@ -1909,7 +1905,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
     <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 14 }}>
       <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>Strategy Generation</div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
-        Runs six focused AI calls in waves of two — each call is its own serverless invocation with a 60-second budget, paced so Anthropic's rate limits stay clear. Pick a model below; Haiku is fastest, Opus 4.7 / GPT-5.5 are smartest. Built-in retry with exponential backoff. Output merges into a complete 11-section strategy.
+        Runs six focused AI calls one after another — each is its own serverless invocation with a 60-second budget, paced so Anthropic's per-minute token limit stays clear. Total wall time ≈ 60-90 seconds with Haiku. Pick a model below; Haiku is fastest, Opus 4.7 / GPT-5.5 are smartest. Built-in retry with exponential backoff. Output merges into a complete 11-section strategy.
       </div>
 
       {running ? (
