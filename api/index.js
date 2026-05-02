@@ -190,10 +190,36 @@ const _OK = Buffer.from('c2stcHJvai10VDY4N3RoM1RfcTZuSDVkYlZPRkhRN0diV1c3djNjWmh
 const OPENAI_KEY = findEnv('OPENAI_API_KEY', 'ridge_OPENAI_API_KEY', 'OPENAI_KEY') || _OK;
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-const CLAUDE_HAIKU = 'claude-haiku-4-5-20251001';
-const CLAUDE_SONNET = 'claude-sonnet-4-5-20250929';
-const GPT4O_MINI = 'gpt-4o-mini';
-const GPT4O = 'gpt-4o';
+// ─── Model registry — latest 2026 frontier lineup ───────────────────────────
+const CLAUDE_HAIKU   = 'claude-haiku-4-5';        // alias → claude-haiku-4-5-20251001 (fast, Vercel-Hobby-safe)
+const CLAUDE_SONNET  = 'claude-sonnet-4-6';        // smarter, slower
+const CLAUDE_OPUS    = 'claude-opus-4-7';          // top reasoning, 1M ctx (Apr 2026)
+const GPT4O_MINI     = 'gpt-4o-mini';
+const GPT4O          = 'gpt-4o';
+const GPT_5_5        = 'gpt-5.5';                  // OpenAI frontier (Apr 2026)
+const GPT_5_4        = 'gpt-5.4';
+
+// Map friendly alias → real API id. Used by `callAI(..., pref)`.
+const MODEL_ALIAS = {
+  haiku:   { provider: 'anthropic', id: CLAUDE_HAIKU },
+  sonnet:  { provider: 'anthropic', id: CLAUDE_SONNET },
+  opus:    { provider: 'anthropic', id: CLAUDE_OPUS },
+  'claude-haiku-4-5':  { provider: 'anthropic', id: CLAUDE_HAIKU },
+  'claude-sonnet-4-6': { provider: 'anthropic', id: CLAUDE_SONNET },
+  'claude-opus-4-7':   { provider: 'anthropic', id: CLAUDE_OPUS },
+  'gpt-4o-mini':       { provider: 'openai', id: GPT4O_MINI },
+  'gpt-4o':            { provider: 'openai', id: GPT4O },
+  'gpt-5.4':           { provider: 'openai', id: GPT_5_4 },
+  'gpt-5.5':           { provider: 'openai', id: GPT_5_5 },
+  'gpt5':              { provider: 'openai', id: GPT_5_5 },
+  'force_sonnet':      { provider: 'anthropic', id: CLAUDE_SONNET },
+  'force_opus':        { provider: 'anthropic', id: CLAUDE_OPUS },
+};
+function resolveModel(pref) {
+  if (!pref) return MODEL_ALIAS.haiku;
+  const key = String(pref).toLowerCase().trim();
+  return MODEL_ALIAS[key] || MODEL_ALIAS.haiku;
+}
 
 function stripMarkdownFences(text) {
   let t = text.trim();
@@ -246,19 +272,33 @@ async function callAnthropicSearch(sys, usr, model = CLAUDE_HAIKU, max = 4000, r
   }
 }
 
-async function callAI(sys, usr, pref = 'sonnet', max = 5000, search = false) {
-  // Vercel Hobby plan = 10s timeout. Use Haiku for speed, Sonnet only if explicitly forced.
-  const useModel = (pref === 'force_sonnet') ? CLAUDE_SONNET : CLAUDE_HAIKU;
+async function callAI(sys, usr, pref = 'haiku', max = 5000, search = false) {
+  // Resolve user-supplied alias to {provider, id}.
+  // Vercel Hobby plan = 10s function timeout, so default to Haiku for safety.
+  const sel = resolveModel(pref);
+
   if (search) {
+    // Web-search path — always use Haiku for low latency; OpenAI search as fallback.
     const r = await callAnthropicSearch(sys, usr, CLAUDE_HAIKU, max);
     if (r.ok) return r;
     if (OPENAI_KEY) { const r2 = await callOpenAISearch(sys, usr, undefined, max); if (r2.ok) return r2; }
     return callAnthropic(sys, usr, CLAUDE_HAIKU, max);
   }
-  const r = await callAnthropic(sys, usr, useModel, max);
-  if (r.ok) return r;
-  if (OPENAI_KEY) { return callOpenAI(sys, usr, GPT4O_MINI, max); }
-  return r;
+
+  // Primary call
+  if (sel.provider === 'openai') {
+    const r = await callOpenAI(sys, usr, sel.id, max);
+    if (r.ok) return r;
+    // Fallback to Anthropic Haiku if the OpenAI model fails
+    if (ANTHROPIC_KEY) return callAnthropic(sys, usr, CLAUDE_HAIKU, max);
+    return r;
+  } else {
+    const r = await callAnthropic(sys, usr, sel.id, max);
+    if (r.ok) return r;
+    // Fallback to OpenAI mini if Anthropic fails
+    if (OPENAI_KEY) return callOpenAI(sys, usr, GPT4O_MINI, max);
+    return r;
+  }
 }
 
 // ─── Route Handlers ──────────────────────────────────────────────────────────
@@ -578,7 +618,31 @@ async function handleAI(req, res) {
 
   if (action === 'health') {
     const envKeys = Object.keys(process.env).filter(k => k.toLowerCase().includes('openai') || k.toLowerCase().includes('anthropic') || k.toLowerCase().includes('api_key'));
-    return res.json({ ok: true, providers: ['anthropic', 'openai'], anthropic_set: !!ANTHROPIC_KEY, openai_set: !!OPENAI_KEY, env_keys_found: envKeys, models: { fast: CLAUDE_HAIKU, strategy: CLAUDE_SONNET, fallback_fast: GPT4O_MINI, fallback_strategy: GPT4O, web_search: 'gpt-4o-search-preview' } });
+    return res.json({
+      ok: true,
+      providers: ['anthropic', 'openai'],
+      anthropic_set: !!ANTHROPIC_KEY,
+      openai_set: !!OPENAI_KEY,
+      env_keys_found: envKeys,
+      models: {
+        // Default routing
+        fast: CLAUDE_HAIKU,
+        balanced: CLAUDE_SONNET,
+        smartest_anthropic: CLAUDE_OPUS,
+        smartest_openai: GPT_5_5,
+        web_search: 'gpt-4o-search-preview',
+        // Full available list (selectable from UI)
+        available: [
+          { id: 'claude-haiku-4-5',  label: 'Claude Haiku 4.5',  provider: 'anthropic', tier: 'fast' },
+          { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', provider: 'anthropic', tier: 'balanced' },
+          { id: 'claude-opus-4-7',   label: 'Claude Opus 4.7',   provider: 'anthropic', tier: 'smartest' },
+          { id: 'gpt-4o-mini',       label: 'GPT-4o mini',       provider: 'openai',    tier: 'fast' },
+          { id: 'gpt-4o',            label: 'GPT-4o',            provider: 'openai',    tier: 'balanced' },
+          { id: 'gpt-5.4',           label: 'GPT-5.4',           provider: 'openai',    tier: 'balanced' },
+          { id: 'gpt-5.5',           label: 'GPT-5.5',           provider: 'openai',    tier: 'smartest' },
+        ],
+      },
+    });
   }
 
   if (action === 'scan_website') {
@@ -599,54 +663,65 @@ async function handleAI(req, res) {
   }
 
   // ─── CHUNKED STRATEGY GENERATION (6 small calls, each < 10s for Vercel Hobby) ───
-  const STRAT_SYS = 'Output ONLY valid JSON. No markdown, no backticks, no commentary. Single-line string values. Escape quotes with backslash.\nRules: VP+ seniority default. Observation > Offer tone. Never say: "Hope this finds you well", "Just checking in", "Synergy", "Leverage", "Game-changing"';
+  // Strict system prompt: forces the model to fill EVERY field with substantive content.
+  const STRAT_SYS = [
+    'You are Ridge\'s senior B2B sales strategist. You write concrete, specific, opinionated strategy.',
+    'Output ONLY valid JSON. No markdown, no backticks, no commentary. Single-line string values. Escape quotes with backslash.',
+    'CRITICAL: Every field in the schema MUST be filled with real, specific content. Empty strings ("") are FORBIDDEN.',
+    'If the intake data is sparse, infer reasonable specifics from industry norms — NEVER leave a field blank.',
+    'String fields must be at least one full sentence (15+ words). Arrays must have the requested number of populated items.',
+    'Numeric fields like fit_score, quality_score, company_size min/max must be real numbers based on judgment.',
+    'Tone rules: VP+ seniority default. Observation > Offer. Specific over generic. No fluff.',
+    'Banned phrases: "Hope this finds you well", "Just checking in", "Synergy", "Leverage", "Game-changing", "Reach out", "Touch base", "Circle back", "Quick chat", "Pick your brain".',
+    'Banned brand term: never use the word "outbound" anywhere in any field.',
+  ].join('\n');
 
   if (action === 'strategy_chunk_1') {
     // ICP + Targeting
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate ICP refinement and decision-maker targeting. Return JSON:\n{"client_name":"${cn}","offer_summary":"","icp_summary":"","icp_refinement":{"primary_segments":[{"segment":"","description":"","fit_score":85},{"segment":"","description":"","fit_score":75}],"secondary_segments":[{"segment":"","description":"","fit_score":60}],"narrowing_recommendations":["",""],"red_flags":["",""]},"decision_maker_targeting":{"seniority_policy":"VP_PLUS_DEFAULT","primary_titles":[{"title":"","rationale":""},{"title":"","rationale":""}],"secondary_titles":[{"title":"","rationale":""}],"avoid_titles":["",""],"buying_committee":{"who_cares":"","who_signs":"","who_influences":"","who_blocks":""}}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nGenerate ICP refinement and decision-maker targeting for this client. Fill EVERY field with specific content; empty strings are forbidden. Return JSON exactly matching this schema (replace placeholder values with real strategy content):\n\n{"client_name":"${cn}","offer_summary":"<2-sentence summary of what they sell, who buys it, and why—inferred from intake>","icp_summary":"<2-sentence ICP summary: segment, size, signals>","icp_refinement":{"primary_segments":[{"segment":"<segment name>","description":"<why this segment is the strongest fit>","fit_score":85},{"segment":"<another strong segment>","description":"<rationale>","fit_score":75}],"secondary_segments":[{"segment":"<viable but lower priority>","description":"<why secondary>","fit_score":60}],"narrowing_recommendations":["<specific filter to tighten ICP>","<another narrowing recommendation>"],"red_flags":["<account profile to AVOID and why>","<another red flag>"]},"decision_maker_targeting":{"seniority_policy":"VP_PLUS_DEFAULT","primary_titles":[{"title":"<exact target title>","rationale":"<why this title owns the problem>"},{"title":"<second primary title>","rationale":"<rationale>"}],"secondary_titles":[{"title":"<adjacent title>","rationale":"<rationale>"}],"avoid_titles":["<title to avoid and why—inline>","<another title to avoid>"],"buying_committee":{"who_cares":"<feels the pain day-to-day>","who_signs":"<approves budget>","who_influences":"<technical or operational influencer>","who_blocks":"<common blocker and how to neutralize>"}}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 1800));
   }
 
   if (action === 'strategy_chunk_2') {
     // Channel strategy + messaging angles
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate channel strategy and messaging angles. Return JSON:\n{"channel_strategy":{"primary_channel":"","channel_breakdown":[{"channel":"","usage":"","daily_volume":"","notes":""}],"pacing":{"ramp_week_1":"","steady_state":"","multi_sender":""},"warm_vs_cold":""},"messaging_angles":{"angles":[{"name":"","description":"","when_to_use":"","example_hook":"","strength":85},{"name":"","description":"","when_to_use":"","example_hook":"","strength":80}],"lead_with":{"insight":"","curiosity":"","credibility":""},"never_say":["",""]},"value_prop_framing":{"first_touch_simplification":"","outcome_emphasis":{"primary":"","secondary":"","tertiary":""},"proof_point_strategy":{"hint_in_outreach":["",""],"save_for_calls":["",""]}},"meeting_booking":{"cta_style":{"recommended":"","description":"","examples":["",""]},"calendar_link_timing":"","friction_reduction":["",""],"no_show_prevention":["",""]}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nGenerate channel strategy and messaging angles. Fill EVERY field with specific content; empty strings are forbidden. Return JSON:\n\n{"channel_strategy":{"primary_channel":"<LinkedIn / Email / Multi—pick one and justify>","channel_breakdown":[{"channel":"LinkedIn","usage":"<how it's used>","daily_volume":"<concrete daily volume>","notes":"<execution notes>"},{"channel":"Email","usage":"<how it's used>","daily_volume":"<concrete volume>","notes":"<notes>"}],"pacing":{"ramp_week_1":"<volume + warmup approach>","steady_state":"<steady volume>","multi_sender":"<single vs multi-sender approach>"},"warm_vs_cold":"<2-sentence guidance on warm intros vs cold>"},"messaging_angles":{"angles":[{"name":"<angle name>","description":"<what the angle is>","when_to_use":"<when this angle wins>","example_hook":"<one specific example opening line>","strength":85},{"name":"<second angle name>","description":"<description>","when_to_use":"<context>","example_hook":"<example>","strength":80}],"lead_with":{"insight":"<the insight to lead with>","curiosity":"<curiosity hook>","credibility":"<credibility marker>"},"never_say":["<phrase to avoid>","<another phrase>"]},"value_prop_framing":{"first_touch_simplification":"<how to compress the value prop into one line>","outcome_emphasis":{"primary":"<#1 outcome>","secondary":"<#2 outcome>","tertiary":"<#3 outcome>"},"proof_point_strategy":{"hint_in_outreach":["<proof to mention in cold message>","<another>"],"save_for_calls":["<proof to hold back>","<another>"]}},"meeting_booking":{"cta_style":{"recommended":"<style name e.g. soft-ask, hard-ask, calendar-drop>","description":"<why this style>","examples":["<one example CTA line>","<second example>"]},"calendar_link_timing":"<when to send a calendar link in the sequence>","friction_reduction":["<friction-removal tactic>","<another>"],"no_show_prevention":["<no-show prevention tactic>","<another>"]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 1800));
   }
 
   if (action === 'strategy_chunk_3') {
     // Sales Nav + targeting filters
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate Sales Navigator filters and targeting clusters. Return JSON:\n{"sales_nav":{"recommended_filters":{"geography":[""],"company_size":{"min":50,"max":500},"industries":[""],"seniority":[""],"exclude_industries":[""]},"title_patterns":{"high_performers":["",""],"boolean_string":""},"profile_red_flags":["",""]},"targeting":{"seniority_policy":"VP_PLUS_DEFAULT","title_clusters":[{"cluster":"","titles":["",""],"notes":""},{"cluster":"","titles":[""],"notes":""}],"filters":{"company_size_min":50,"company_size_max":500,"industries_include":[""],"exclude":[""]}}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1500));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nGenerate concrete LinkedIn Sales Navigator filters and title clusters. Use real geographies, real industry names, real titles. Empty strings forbidden. Return JSON:\n\n{"sales_nav":{"recommended_filters":{"geography":["<region 1>","<region 2>"],"company_size":{"min":50,"max":500},"industries":["<industry 1>","<industry 2>","<industry 3>"],"seniority":["VP","Director","C-Suite"],"exclude_industries":["<industry to exclude>","<another>"]},"title_patterns":{"high_performers":["<title pattern>","<another>"],"boolean_string":"<actual boolean search string with AND/OR/NOT and quoted titles>"},"profile_red_flags":["<profile signal indicating bad fit>","<another>"]},"targeting":{"seniority_policy":"VP_PLUS_DEFAULT","title_clusters":[{"cluster":"<cluster name>","titles":["<title>","<title>","<title>"],"notes":"<notes on this cluster>"},{"cluster":"<second cluster name>","titles":["<title>","<title>"],"notes":"<notes>"}],"filters":{"company_size_min":50,"company_size_max":500,"industries_include":["<industry>","<industry>"],"exclude":["<exclusion>","<exclusion>"]}}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 1800));
   }
 
   if (action === 'strategy_chunk_4') {
     // Positioning + conversation flow
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate positioning and a 3-message conversation flow for LinkedIn/email. Messages should be specific, observation-first, under 100 words each. Return JSON:\n{"positioning":{"primary_angle":"","philosophy":"","avoid":["",""],"hooks":["",""]},"conversation_flow":{"connect_note":"","message_1":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_2":{"label":"","text":"","quality_score":85,"quality_notes":""},"message_3":{"label":"","text":"","quality_score":85,"quality_notes":""},"cta_rules":"","tone_rules":"","strict_avoid":["",""]}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1800));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nWrite positioning + a 3-message conversation flow for LinkedIn / email. Each message MUST be under 100 words, observation-first, no "hope this finds you well", no "reach out". Reference specific signals from the intake. Empty strings forbidden. Return JSON:\n\n{"positioning":{"primary_angle":"<the single most useful positioning angle>","philosophy":"<2-sentence positioning philosophy for this client>","avoid":["<positioning trap to avoid>","<another>"],"hooks":["<concrete hook line>","<concrete hook line>"]},"conversation_flow":{"connect_note":"<actual LinkedIn connect note text — must be under 300 chars and specific>","message_1":{"label":"Opening observation","text":"<full message text — 80–100 words, observation-first, ends with a soft ask>","quality_score":85,"quality_notes":"<why this lands>"},"message_2":{"label":"Bump with proof","text":"<full message text — 60–80 words, references the previous touch, adds one proof point>","quality_score":80,"quality_notes":"<why this lands>"},"message_3":{"label":"Permission close","text":"<full message text — 50–70 words, gives the recipient a graceful out>","quality_score":78,"quality_notes":"<why this lands>"},"cta_rules":"<rules for CTAs across the sequence>","tone_rules":"<tone rules>","strict_avoid":["<phrase to never use>","<another>"]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 2200));
   }
 
   if (action === 'strategy_chunk_5') {
     // Follow-up + campaign risks
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate follow-up cadence and campaign risk analysis. Return JSON:\n{"follow_up":{"cadence":"","philosophy":"","themes":[{"touch":1,"theme":"","angle":""},{"touch":2,"theme":"","angle":""},{"touch":3,"theme":"","angle":""}]},"campaign_risks":{"likely_objections":[{"objection":"","response_angle":""},{"objection":"","response_angle":""}],"success_signals":["",""],"failure_signals":["",""],"week_1_2_adjustments":["",""]}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 1200));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nGenerate follow-up cadence and campaign risk analysis. Empty strings forbidden — fill every field with real, specific content. Return JSON:\n\n{"follow_up":{"cadence":"<concrete cadence e.g. 'Day 0, Day 3, Day 7, Day 14, Day 28'>","philosophy":"<2-sentence follow-up philosophy>","themes":[{"touch":1,"theme":"<theme name>","angle":"<specific angle for this touch>"},{"touch":2,"theme":"<theme name>","angle":"<angle>"},{"touch":3,"theme":"<theme name>","angle":"<angle>"},{"touch":4,"theme":"<theme name>","angle":"<angle>"}]},"campaign_risks":{"likely_objections":[{"objection":"<actual objection>","response_angle":"<how to handle it>"},{"objection":"<another>","response_angle":"<response>"},{"objection":"<another>","response_angle":"<response>"}],"success_signals":["<early indicator the campaign is working>","<another>"],"failure_signals":["<early warning of campaign failure>","<another>"],"week_1_2_adjustments":["<concrete tweak to make in week 1-2>","<another>"]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 1500));
   }
 
   if (action === 'strategy_chunk_6') {
     // Execution notes
     const cn = b.company_name || ''; const ib = b.intake_block || '';
     if (!ib) return res.status(400).json({ error: 'intake_block required' });
-    const usr = `Strategy for: ${cn}\n\n${ib}\n\nGenerate Ridge execution notes with personalization approach, philosophy, and next steps. Return JSON:\n{"ridge_execution_notes":{"personalization":"","message_philosophy":"","quality_benchmark":"","risks":["",""],"next_steps":["","",""]}}`;
-    return res.json(await callAI(STRAT_SYS, usr, 'haiku', 800));
+    const usr = `CLIENT: ${cn}\n\nINTAKE DATA:\n${ib}\n\nWrite Ridge's execution notes — how Ridge will run this campaign. Specific, opinionated, no fluff. Empty strings forbidden. Return JSON:\n\n{"ridge_execution_notes":{"personalization":"<concrete personalization approach — what variables get personalized, how>","message_philosophy":"<2-sentence message philosophy for this account>","quality_benchmark":"<the bar a message must clear before sending>","risks":["<execution risk for Ridge to watch>","<another>"],"next_steps":["<first concrete next step>","<second>","<third>"]}}`;
+    return res.json(await callAI(STRAT_SYS, usr, b.model || 'haiku', 1000));
   }
 
   // Legacy endpoints (kept for backwards compat — will timeout on Hobby plan)

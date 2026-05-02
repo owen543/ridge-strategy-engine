@@ -1773,7 +1773,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [running, setRunning] = useState(false);
-  const [model, setModel] = useState('sonnet');
+  const [model, setModel] = useState('claude-haiku-4-5');
   const [error, setError] = useState('');
 
   const runStrategyLive = async () => {
@@ -1812,7 +1812,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
             const raw = await fetch(AI_API, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: chunk.action, company_name: companyName, intake_block: intakeBlock }),
+              body: JSON.stringify({ action: chunk.action, company_name: companyName, intake_block: intakeBlock, model }),
             });
             const res = await raw.json();
             if (res.ok && res.text) {
@@ -1890,7 +1890,7 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
     <div style={{ background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 14 }}>
       <div style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 4 }}>Strategy Generation</div>
       <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
-        Runs two AI calls (Research &amp; Targeting + Execution &amp; Messaging) via Claude Sonnet, with OpenAI fallback. Merges into a complete 11-section strategy.
+        Runs six focused AI calls in sequence — each fits inside Vercel's 10-second function window. Pick a model below; Haiku is fastest and most reliable, Opus 4.7 / GPT-5.5 are smartest. OpenAI auto-fallback if Anthropic stalls. Output merges into a complete 11-section strategy.
       </div>
 
       {running ? (
@@ -1903,10 +1903,17 @@ function StrategyGenerator({ T, workspaceId, onStrategyGenerated, intake }) {
               padding: '3px 8px', borderRadius: 5, border: `1px solid ${T.border}`, background: T.bgInput,
               color: T.text, fontSize: 12, fontFamily: 'inherit', height: 26,
             }}>
-              <option value="sonnet">Claude Sonnet (Best)</option>
-              <option value="haiku">Claude Haiku (Fast)</option>
-              <option value="gpt4o">GPT-4o (Fallback)</option>
-              <option value="gpt4o-mini">GPT-4o Mini (Fast/Cheap)</option>
+              <optgroup label="Anthropic">
+                <option value="claude-haiku-4-5">Claude Haiku 4.5 — Fast (recommended)</option>
+                <option value="claude-sonnet-4-6">Claude Sonnet 4.6 — Balanced</option>
+                <option value="claude-opus-4-7">Claude Opus 4.7 — Smartest</option>
+              </optgroup>
+              <optgroup label="OpenAI">
+                <option value="gpt-4o-mini">GPT-4o mini — Fast</option>
+                <option value="gpt-4o">GPT-4o — Balanced</option>
+                <option value="gpt-5.4">GPT-5.4</option>
+                <option value="gpt-5.5">GPT-5.5 — Newest</option>
+              </optgroup>
             </select>
           </div>
           {error && (
