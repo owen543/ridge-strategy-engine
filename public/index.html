@@ -1575,6 +1575,45 @@ function deepMerge(target, source) {
   return result;
 }
 
+// Defense-in-depth: scrub any Ridge self-references that leak through Circleback extraction.
+// If a string field contains 'Ridge' / 'joinridge' / 'ridge strategy engine' and the prospect
+// company name is something else, drop the field. Prospect-name match short-circuits the scrub.
+function scrubRidgeLeaks(extracted, prospectName, prospectWebsite) {
+  if (!extracted || typeof extracted !== 'object') return extracted;
+  const RIDGE_PATTERNS = [/\bridge\b/i, /joinridge/i, /ridge strategy engine/i, /ridge internal/i];
+  const prospect = (prospectName || '').toLowerCase().trim();
+  const isRidgeReference = (val) => {
+    if (typeof val !== 'string' || !val) return false;
+    const v = val.toLowerCase();
+    // If the value mentions the actual prospect name, it's legit even if it also says 'ridge'
+    if (prospect && prospect.length > 2 && v.includes(prospect)) return false;
+    return RIDGE_PATTERNS.some(p => p.test(val));
+  };
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.map(walk).filter(x => x !== null && x !== '');
+    if (node && typeof node === 'object') {
+      const out = {};
+      for (const k of Object.keys(node)) {
+        const cleaned = walk(node[k]);
+        out[k] = cleaned;
+      }
+      return out;
+    }
+    if (typeof node === 'string' && isRidgeReference(node)) return '';
+    return node;
+  };
+  const scrubbed = walk(extracted);
+  // Special case: if extracted company.name/website is Ridge but we know the prospect is X, force-correct it.
+  if (prospectName && scrubbed.company) {
+    const cn = (scrubbed.company.name || '').toLowerCase();
+    if (cn && (cn.includes('ridge') || cn.includes('joinridge'))) {
+      scrubbed.company.name = prospectName;
+      if (prospectWebsite) scrubbed.company.website = prospectWebsite;
+    }
+  }
+  return scrubbed;
+}
+
 function mergeIntoEmpty(existing, scanned) {
   const result = JSON.parse(JSON.stringify(existing));
   for (const section in scanned) {
@@ -1712,20 +1751,37 @@ function IntakeForm({ T, workspaceId, onIntakeChange }) {
 
   const handleImport = async () => {
     if (!notes) return;
-    setImporting(true); setImportMsg('Extracting structured data from meeting notes with AI…');
+    setImporting(true);
+    // Pair notes with the website-scan anchor: pass the prospect company + website so the
+    // extractor knows which side of the call is the prospect. Without this anchor, Circleback
+    // dialogue from Ridge's side leaks into the intake (the original bug).
+    const prospectName = (intake?.company?.name || '').trim();
+    const prospectWebsite = (intake?.company?.website || scanUrl || '').trim();
+    const anchored = prospectName || prospectWebsite;
+    setImportMsg(anchored
+      ? `Extracting prospect data (anchored to ${prospectName || prospectWebsite}, ignoring Ridge)…`
+      : 'Extracting prospect data (tip: scan the website first to anchor the import)…');
     try {
       const res = await fetch(AI_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'extract_notes', notes: notes, source: notesSource }),
+        body: JSON.stringify({
+          action: 'extract_notes',
+          notes: notes,
+          source: notesSource,
+          prospect_name: prospectName,
+          prospect_website: prospectWebsite,
+        }),
       });
       const result = await res.json();
       if (result.ok && result.text) {
-        const parsed = robustJsonParse(result.text);
+        const parsedRaw = robustJsonParse(result.text);
+        const parsed = scrubRidgeLeaks(parsedRaw, prospectName, prospectWebsite);
         const merged = mergeIntoEmpty(intake, parsed);
         setIntake(merged); save(merged);
-        setImportMsg(`Import complete via ${result.provider}. Data extracted and merged into empty fields.`);
-        showToast('Meeting notes imported — data merged', 'success');
+        const anchorNote = anchored ? ` (anchored to ${prospectName || prospectWebsite})` : '';
+        setImportMsg(`Import complete via ${result.provider}${anchorNote}. Ridge mentions filtered, prospect data merged into empty fields.`);
+        showToast('Meeting notes imported — prospect data merged', 'success');
       } else {
         setImportMsg('Import failed: ' + (result.error || 'Unknown error'));
         showToast('Notes import failed', 'error');

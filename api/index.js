@@ -670,9 +670,42 @@ async function handleAI(req, res) {
   if (action === 'extract_notes') {
     const notesText = (b.notes || '').trim();
     const source = b.source || 'raw';
+    // Optional anchor: prospect company name + website (from prior website scan).
+    // When present, the extractor anchors on this entity and ignores Ridge's own dialogue.
+    const prospectName = (b.prospect_name || b.client_name || '').trim();
+    const prospectWebsite = (b.prospect_website || '').trim();
     if (!notesText) return res.status(400).json({ error: 'Notes text required' });
-    const sys = `STRICT JSON OUTPUT MODE. Return ONLY valid JSON. No markdown. No backticks. No commentary. No trailing commas. Escape all quotes inside strings. No newlines inside string values.\n\nYou are extracting client intake data from meeting notes (likely from Circleback, Granola, Fathom, Otter, or similar AI notetaker).\n\nThese notes contain a conversation about a client's business, offer, target market, pain points, and goals. Extract as much structured data as possible.\n\nFor fields you cannot determine, use empty string "". Do not fabricate. Only extract what is explicitly mentioned or clearly implied in the notes.`;
-    const usr = `Extract intake form data from these meeting notes.\n\nSOURCE: ${source}\n\nNOTES:\n${notesText}\n\nReturn ONLY this JSON. Fill every field you can extract. Empty string for unknowns.\n\n{"company":{"name":"","website":"","description":"","size_range":"","industry":""},"offer":{"name":"","description":"","pricing_model":"","avg_deal_size":"","differentiators":""},"icp":{"description":"","company_size":{"min":"","max":""},"industries":"","geographies":"","technographics":"","excluded_segments":""},"value_props":{"primary":"","secondary":"","proof_points":""},"pain_points":{"primary":"","secondary":"","status_quo_cost":""},"constraints":{"excluded_titles":"","tone_preference":"","compliance_notes":"","other":""}}`;
+
+    const anchorBlock = (prospectName || prospectWebsite)
+      ? `\n\nPROSPECT ANCHOR (extract data ONLY about this entity):\n  Company: ${prospectName || '(unknown)'}\n  Website: ${prospectWebsite || '(unknown)'}\n\nThis is the company we are profiling. All extracted intake fields must describe THIS company, its offer, its customers, its pain.`
+      : '';
+
+    const sys = [
+      'STRICT JSON OUTPUT MODE. Return ONLY valid JSON. No markdown. No backticks. No commentary. No trailing commas. Escape all quotes inside strings. No newlines inside string values.',
+      '',
+      'You are extracting PROSPECT intake data from a sales discovery call transcript (Circleback, Granola, Fathom, Otter, or similar AI notetaker).',
+      '',
+      'CRITICAL CONTEXT: These notes are from a sales call where Ridge (the seller, joinridge.co) is meeting with a PROSPECT (the buyer). The transcript contains dialogue from BOTH sides. Your job is to extract ONLY the prospect\'s data — NEVER Ridge\'s.',
+      '',
+      'IGNORE EVERYTHING ABOUT RIDGE:',
+      '- Ignore any mention of "Ridge", "joinridge.co", "Ridge Strategy Engine", "Ridge Internal", or owen@joinridge.co / owen@ridgeinternal.com.',
+      '- Ignore Ridge\'s offer, services, ICP, pricing, value props, methodology, case studies, team, or pain points.',
+      '- Ignore Ridge\'s questions about the prospect — only extract from the prospect\'s ANSWERS.',
+      '- If the prospect mentions Ridge ("we\'re evaluating Ridge", "Ridge offers X"), do NOT use that to fill prospect fields.',
+      '- If the speaker is clearly Ridge (uses "we" referring to Ridge\'s services), skip that line entirely.',
+      '',
+      'EXTRACT ONLY ABOUT THE PROSPECT (the buyer-side company):',
+      '- company.name, company.website, company.description — the prospect\'s company',
+      '- offer.* — what the PROSPECT sells to THEIR customers (not what Ridge sells)',
+      '- icp.* — the PROSPECT\'s ideal customer (not Ridge\'s)',
+      '- value_props.* — what the PROSPECT positions to their market',
+      '- pain_points.* — what the PROSPECT is struggling with that brought them to this call',
+      '- constraints.* — the PROSPECT\'s constraints',
+      '',
+      'For fields you cannot determine from the prospect\'s side of the conversation, use empty string "". Do NOT fabricate. Do NOT default to Ridge\'s data when the prospect didn\'t mention something.',
+    ].join('\n');
+
+    const usr = `Extract PROSPECT intake from these meeting notes. Remember: Ridge is the SELLER — ignore Ridge entirely. Only extract about the prospect (buyer).${anchorBlock}\n\nSOURCE: ${source}\n\nNOTES:\n${notesText}\n\nReturn ONLY this JSON describing the PROSPECT. Empty string for fields the prospect did not address.\n\n{"company":{"name":"","website":"","description":"","size_range":"","industry":""},"offer":{"name":"","description":"","pricing_model":"","avg_deal_size":"","differentiators":""},"icp":{"description":"","company_size":{"min":"","max":""},"industries":"","geographies":"","technographics":"","excluded_segments":""},"value_props":{"primary":"","secondary":"","proof_points":""},"pain_points":{"primary":"","secondary":"","status_quo_cost":""},"constraints":{"excluded_titles":"","tone_preference":"","compliance_notes":"","other":""}}`;
     return res.json(await callAI(sys, usr, 'haiku', 3000));
   }
 
